@@ -34,14 +34,26 @@ func extractExtensionIDFromURL(rawURL string) string {
 	return ""
 }
 
-func downloadChromeExtensionCRX(ctx context.Context, extensionID string, client *http.Client) ([]byte, error) {
+// errExtensionNotAvailableForProdVersion 表示商店按当前 prodversion 拒绝下发安装包。
+//
+// 商店在插件要求的最低 Chrome 版本高于 prodversion 时返回 HTTP 204 空响应
+// （不是错误码，所以必须显式识别，否则会被当成下载成功、读出 0 字节）。
+type errExtensionNotAvailableForProdVersion struct {
+	prodVersion string
+}
+
+func (e errExtensionNotAvailableForProdVersion) Error() string {
+	return fmt.Sprintf("插件商店未按当前内核版本 %s 下发安装包（HTTP 204）；该插件要求更高的 Chrome 版本，或已从商店下架", e.prodVersion)
+}
+
+func downloadChromeExtensionCRX(ctx context.Context, extensionID string, prodVersion string, client *http.Client) ([]byte, error) {
 	if client == nil {
 		client = &http.Client{Timeout: extensionDownloadTimeout}
 	}
-	downloadURL := BuildChromeExtensionDownloadURL(extensionID)
+	downloadURL := BuildChromeExtensionDownloadURLWithProdVersion(extensionID, prodVersion)
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
-		data, err := downloadChromeExtensionCRXOnce(ctx, client, downloadURL)
+		data, err := downloadChromeExtensionCRXOnce(ctx, client, downloadURL, prodVersion)
 		if err == nil {
 			return data, nil
 		}
@@ -58,7 +70,7 @@ func downloadChromeExtensionCRX(ctx context.Context, extensionID string, client 
 	return nil, formatExtensionDownloadError(lastErr)
 }
 
-func downloadChromeExtensionCRXOnce(ctx context.Context, client *http.Client, downloadURL string) ([]byte, error) {
+func downloadChromeExtensionCRXOnce(ctx context.Context, client *http.Client, downloadURL string, prodVersion string) ([]byte, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return nil, err
@@ -70,6 +82,11 @@ func downloadChromeExtensionCRXOnce(ctx context.Context, client *http.Client, do
 		return nil, fmt.Errorf("下载插件失败: %w", err)
 	}
 	defer response.Body.Close()
+	// 204 是商店「按该版本不提供安装包」的正常应答，必须单独识别，
+	// 不能落进 2xx 成功分支，否则后续只会报「插件包不是有效的 CRX/ZIP 文件」。
+	if response.StatusCode == http.StatusNoContent {
+		return nil, errExtensionNotAvailableForProdVersion{prodVersion: prodVersion}
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("下载插件失败: HTTP %d", response.StatusCode)
 	}
@@ -80,6 +97,9 @@ func downloadChromeExtensionCRXOnce(ctx context.Context, client *http.Client, do
 	}
 	if len(data) > extensionMaxPackageBytes {
 		return nil, fmt.Errorf("插件包超过限制")
+	}
+	if len(data) == 0 {
+		return nil, errExtensionNotAvailableForProdVersion{prodVersion: prodVersion}
 	}
 	return data, nil
 }
@@ -464,6 +484,58 @@ func normalizeZipEntryPath(value string) string {
 	return path
 }
 
+// extensionManifestKey 把 CRX 里的签名公钥转成 manifest 的 key 字段值。
+//
+// 未打包加载（--load-extension / Extensions.loadUnpacked）时，Chrome 优先用
+// manifest.key 的哈希算扩展 ID；没有 key 就退回用目录绝对路径算，得到的 ID
+// 与商店 ID 不同。ID 一变，依赖 allowed_origins 的原生消息宿主（1Password、
+// Bitwarden 的桌面集成）就会拒绝连接，用户看到的是「插件装了但用不了」。
+func extensionManifestKey(publicKey []byte) string {
+	if len(publicKey) == 0 {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(publicKey)
+}
+
+// ensureExtensionManifestKey 在解包目录的 manifest.json 里补写 key。
+//
+// 返回写入后的 manifest 字节；manifest 已带 key 或无需改动时返回 nil。
+func ensureExtensionManifestKey(installDir string, publicKey []byte) ([]byte, error) {
+	key := extensionManifestKey(publicKey)
+	if key == "" {
+		return nil, nil
+	}
+	manifestPath := filepath.Join(installDir, "manifest.json")
+	manifestData, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return nil, fmt.Errorf("读取插件 manifest 失败: %w", err)
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(manifestData, &root); err != nil {
+		return nil, fmt.Errorf("解析插件 manifest 失败: %w", err)
+	}
+	if existing, ok := root["key"]; ok {
+		var existingKey string
+		if json.Unmarshal(existing, &existingKey) == nil && strings.TrimSpace(existingKey) != "" {
+			// 商店包里自带 key 的插件（例如 Proton Pass）已经是对的，不要覆盖。
+			return nil, nil
+		}
+	}
+	encodedKey, err := json.Marshal(key)
+	if err != nil {
+		return nil, fmt.Errorf("编码插件 manifest key 失败: %w", err)
+	}
+	root["key"] = encodedKey
+	updated, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("序列化插件 manifest 失败: %w", err)
+	}
+	if err := os.WriteFile(manifestPath, updated, 0o644); err != nil {
+		return nil, fmt.Errorf("写入插件 manifest 失败: %w", err)
+	}
+	return updated, nil
+}
+
 func readZipFile(file *zip.File, limit int64) ([]byte, error) {
 	reader, err := file.Open()
 	if err != nil {
@@ -490,12 +562,16 @@ func extensionIDFromManifest(manifestData []byte) string {
 // 插件 ID 必须跨版本稳定：如果直接对整份 manifest 取哈希，升级时 version 变了
 // ID 就跟着变，同一个插件会被当成"另一个插件"装进新目录 —— 旧版本仍然留在库里、
 // 实例配置还指向旧 ID，浏览器继续加载旧代码。这里把版本相关字段剔除后再哈希。
+//
+// key 也要剔除：安装时会把 CRX 公钥补写进磁盘上的 manifest.key，而商店包里
+// 通常没有这个字段。若把 key 计入身份，同一次安装前后算出的身份就不一致，
+// 从本地 zip/目录重新安装同一插件会凭空多出一条记录。
 func extensionIdentityManifest(manifestData []byte) []byte {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(manifestData, &root); err != nil {
 		return manifestData
 	}
-	for _, key := range []string{"version", "version_name"} {
+	for _, key := range []string{"version", "version_name", "key"} {
 		delete(root, key)
 	}
 	normalized, err := json.Marshal(root)

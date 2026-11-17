@@ -114,10 +114,14 @@ func (a *App) BrowserExtensionManualInstallGuide(query string) (BrowserExtension
 	if err := os.MkdirAll(downloadDir, 0o755); err != nil {
 		return BrowserExtensionManualInstallGuide{}, fmt.Errorf("创建手动下载目录失败: %w", err)
 	}
+	prodVersion := ""
+	if a.browserMgr != nil {
+		prodVersion = a.browserMgr.ExtensionDownloadProdVersion()
+	}
 	return BrowserExtensionManualInstallGuide{
 		ExtensionID: extensionID,
 		StoreURL:    browser.BuildChromeWebStoreURL(extensionID),
-		DownloadURL: browser.BuildChromeExtensionDownloadURL(extensionID),
+		DownloadURL: browser.BuildChromeExtensionDownloadURLWithProdVersion(extensionID, prodVersion),
 		DownloadDir: downloadDir,
 		FileName:    extensionID + ".crx",
 	}, nil

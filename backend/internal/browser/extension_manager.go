@@ -1,9 +1,11 @@
 package browser
 
 import (
+	"ant-chrome/backend/internal/logger"
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -54,12 +56,50 @@ func BuildChromeWebStoreURL(extensionID string) string {
 	return "https://chromewebstore.google.com/detail/" + normalizedID
 }
 
+// extensionDownloadFallbackProdVersion 是探测不到内核版本时上报的 prodversion。
+//
+// Chrome 插件商店按 prodversion 决定是否下发安装包：低于插件的
+// minimum_chrome_version 时返回 HTTP 204 空响应。探测不到真实版本时宁可
+// 报一个足够高的值先把包拿到，让内核自己在加载阶段决定能不能用。
+const extensionDownloadFallbackProdVersion = "9999.0.0.0"
+
 func BuildChromeExtensionDownloadURL(extensionID string) string {
+	return BuildChromeExtensionDownloadURLWithProdVersion(extensionID, extensionDownloadFallbackProdVersion)
+}
+
+// BuildChromeExtensionDownloadURLWithProdVersion 拼出商店下载地址。
+//
+// prodversion 必须是当前内核的真实版本，不能写死：写死成低版本时，
+// 要求更高 Chrome 的插件（例如 1Password 要求 140、Bitwarden 要求 134）
+// 会拿到 204 空响应，表现成「插件包不是有效的 CRX/ZIP 文件」。
+func BuildChromeExtensionDownloadURLWithProdVersion(extensionID string, prodVersion string) string {
 	normalizedID := NormalizeExtensionID(extensionID)
 	if normalizedID == "" {
 		return ""
 	}
-	return "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=120.0.0.0&acceptformat=crx2,crx3&x=id%3D" + normalizedID + "%26installsource%3Dondemand%26uc"
+	prodVersion = strings.TrimSpace(prodVersion)
+	if prodVersion == "" {
+		prodVersion = extensionDownloadFallbackProdVersion
+	}
+	return "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=" + url.QueryEscape(prodVersion) + "&acceptformat=crx2,crx3&x=id%3D" + normalizedID + "%26installsource%3Dondemand%26uc"
+}
+
+// ExtensionDownloadProdVersion 返回下载插件时应该上报的内核版本。
+//
+// 插件安装在应用级目录、与实例无关，所以取默认内核的版本。
+func (m *Manager) ExtensionDownloadProdVersion() string {
+	if m == nil {
+		return extensionDownloadFallbackProdVersion
+	}
+	core, ok := m.GetDefaultCore()
+	if !ok {
+		return extensionDownloadFallbackProdVersion
+	}
+	version := strings.TrimSpace(m.GetChromeVersion(core.CorePath))
+	if version == "" {
+		return extensionDownloadFallbackProdVersion
+	}
+	return version
 }
 
 func (m *Manager) LookupExtension(query string) (ExtensionLookupResult, error) {
@@ -78,23 +118,30 @@ func (m *Manager) LookupExtensionWithHTTPClient(query string, client *http.Clien
 		Installable: true,
 		Message:     "已识别插件 ID，可下载安装",
 	}
-	data, err := downloadChromeExtensionCRX(context.Background(), extensionID, client)
+	data, err := downloadChromeExtensionCRX(context.Background(), extensionID, m.ExtensionDownloadProdVersion(), client)
 	if err != nil {
+		// 拿不到安装包就不能说「可安装」：界面上「可安装」后面紧跟一次必然失败的
+		// 安装，用户看到的失败原因还是「插件包不是有效的 CRX/ZIP 文件」这种二次
+		// 报错，真正的原因（版本不够 / 网络不通 / 已下架）反而被盖住了。
+		result.Installable = false
 		result.Message = "已识别插件 ID，但暂时无法读取商店元信息: " + err.Error()
 		return result, nil
 	}
 	zipData, err := normalizeExtensionArchiveData(data)
 	if err != nil {
+		result.Installable = false
 		result.Message = "已识别插件 ID，但插件包格式无法解析: " + err.Error()
 		return result, nil
 	}
 	manifestData, err := readExtensionManifestFromZip(zipData)
 	if err != nil {
+		result.Installable = false
 		result.Message = "已识别插件 ID，但 manifest 无法解析: " + err.Error()
 		return result, nil
 	}
 	manifest, err := parseExtensionManifest(manifestData)
 	if err != nil {
+		result.Installable = false
 		result.Message = "已识别插件 ID，但 manifest 无法解析: " + err.Error()
 		return result, nil
 	}
@@ -124,7 +171,7 @@ func (m *Manager) InstallExtensionFromWebStoreWithHTTPClient(ctx context.Context
 	if extensionID == "" {
 		return Extension{}, fmt.Errorf("请输入 Chrome 插件 ID 或 Chrome Web Store 链接")
 	}
-	data, err := downloadChromeExtensionCRX(ctx, extensionID, client)
+	data, err := downloadChromeExtensionCRX(ctx, extensionID, m.ExtensionDownloadProdVersion(), client)
 	if err != nil {
 		return Extension{}, err
 	}
@@ -185,6 +232,16 @@ func (m *Manager) InstallExtensionPackageBytes(extensionID string, sourceURL str
 	installDir := filepath.Join(m.ResolveRelativePath(filepath.Join("data", extensionsRootDir)), resolvedID)
 	if err := replaceExtensionDirFromZip(zipData, installDir); err != nil {
 		return Extension{}, err
+	}
+	// 把 CRX 签名公钥写进解包目录的 manifest.key，让未打包加载时算出的扩展 ID
+	// 与商店 ID 一致。否则 Chrome 用目录路径算 ID，原生消息宿主的
+	// allowed_origins 对不上，密码管理器的桌面集成会直接失效。
+	if keyedManifest, keyErr := ensureExtensionManifestKey(installDir, crxPublicKey(data)); keyErr != nil {
+		logger.New("Extension").Warn("写入插件 manifest key 失败，扩展 ID 将与商店 ID 不一致",
+			logger.F("extension_id", resolvedID), logger.F("error", keyErr.Error()))
+	} else if keyedManifest != nil {
+		manifestData = keyedManifest
+		extension.ManifestJSON = string(keyedManifest)
 	}
 	packagePath := ""
 	packageHash := ""
