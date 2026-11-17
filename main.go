@@ -372,7 +372,6 @@ func main() {
 		Windows: &windows.Options{
 			WebviewIsTransparent:                false,
 			WindowIsTranslucent:                 false,
-			WebviewGpuIsDisabled:                true,
 			WebviewDisableRendererCodeIntegrity: true,
 		},
 		LogLevelProduction: wailslogger.ERROR,
