@@ -90,7 +90,7 @@ __pycache__/
 *.pyc
 
 # Local runtime cache
-.tmp/runtime-cache/
+.tmp/
 
 # Test outputs / coverage
 coverage/
