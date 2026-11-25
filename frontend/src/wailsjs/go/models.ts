@@ -274,6 +274,86 @@ export namespace automation {
 
 export namespace backend {
 	
+	export class AppDownloadedUpdate {
+	    version: string;
+	    assetName: string;
+	    installerPath: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppDownloadedUpdate(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.assetName = source["assetName"];
+	        this.installerPath = source["installerPath"];
+	    }
+	}
+	export class AppUpdateAsset {
+	    name: string;
+	    url: string;
+	    sha256: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppUpdateAsset(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.url = source["url"];
+	        this.sha256 = source["sha256"];
+	    }
+	}
+	export class AppUpdateInfo {
+	    ok: boolean;
+	    currentVersion: string;
+	    latestVersion: string;
+	    updateAvailable: boolean;
+	    releaseUrl: string;
+	    notesUrl: string;
+	    force: boolean;
+	    assets: Record<string, AppUpdateAsset>;
+	    versions: string[];
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppUpdateInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.currentVersion = source["currentVersion"];
+	        this.latestVersion = source["latestVersion"];
+	        this.updateAvailable = source["updateAvailable"];
+	        this.releaseUrl = source["releaseUrl"];
+	        this.notesUrl = source["notesUrl"];
+	        this.force = source["force"];
+	        this.assets = this.convertValues(source["assets"], AppUpdateAsset, true);
+	        this.versions = source["versions"];
+	        this.error = source["error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class AutomationScriptImportIssue {
 	    path: string;
 	    message: string;
@@ -503,6 +583,63 @@ export namespace backend {
 	        this.proxyConfig = source["proxyConfig"];
 	    }
 	}
+	export class BrowserFingerprintCapabilityItem {
+	    arg: string;
+	    label: string;
+	    sample: string;
+	    runtimeArg: string;
+	    support: Record<string, string>;
+	    note: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BrowserFingerprintCapabilityItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.arg = source["arg"];
+	        this.label = source["label"];
+	        this.sample = source["sample"];
+	        this.runtimeArg = source["runtimeArg"];
+	        this.support = source["support"];
+	        this.note = source["note"];
+	    }
+	}
+	export class BrowserFingerprintCapabilityGroup {
+	    key: string;
+	    label: string;
+	    items: BrowserFingerprintCapabilityItem[];
+	
+	    static createFrom(source: any = {}) {
+	        return new BrowserFingerprintCapabilityGroup(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.label = source["label"];
+	        this.items = this.convertValues(source["items"], BrowserFingerprintCapabilityItem);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class BrowserFingerprintCapabilityRow {
 	    capability: string;
 	    status: string;
@@ -552,6 +689,73 @@ export namespace backend {
 	        this.rawArgs = source["rawArgs"];
 	        this.launchArgs = source["launchArgs"];
 	        this.rows = this.convertValues(source["rows"], BrowserFingerprintCapabilityRow);
+	        this.warnings = source["warnings"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class BrowserFingerprintCapabilityVersion {
+	    key: string;
+	    label: string;
+	    minMajor: number;
+	    maxMajor: number;
+	    source: string;
+	    note: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BrowserFingerprintCapabilityVersion(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.label = source["label"];
+	        this.minMajor = source["minMajor"];
+	        this.maxMajor = source["maxMajor"];
+	        this.source = source["source"];
+	        this.note = source["note"];
+	    }
+	}
+	export class BrowserFingerprintCapabilityTable {
+	    schemaVersion: number;
+	    updatedAt: string;
+	    notes: string[];
+	    currentVersionKey: string;
+	    currentMajor: number;
+	    versions: BrowserFingerprintCapabilityVersion[];
+	    groups: BrowserFingerprintCapabilityGroup[];
+	    warnings: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new BrowserFingerprintCapabilityTable(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.schemaVersion = source["schemaVersion"];
+	        this.updatedAt = source["updatedAt"];
+	        this.notes = source["notes"];
+	        this.currentVersionKey = source["currentVersionKey"];
+	        this.currentMajor = source["currentMajor"];
+	        this.versions = this.convertValues(source["versions"], BrowserFingerprintCapabilityVersion);
+	        this.groups = this.convertValues(source["groups"], BrowserFingerprintCapabilityGroup);
 	        this.warnings = source["warnings"];
 	    }
 	
@@ -1567,6 +1771,26 @@ export namespace backend {
 	        this.filePath = source["filePath"];
 	    }
 	}
+	export class UpdatePendingInfo {
+	    version: string;
+	    installerPath: string;
+	    pid: number;
+	    createdAt: string;
+	    missing: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdatePendingInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.installerPath = source["installerPath"];
+	        this.pid = source["pid"];
+	        this.createdAt = source["createdAt"];
+	        this.missing = source["missing"];
+	    }
+	}
 
 }
 
@@ -2058,6 +2282,7 @@ export namespace browser {
 	    startStableWindowMs: number;
 	    maxConcurrentInstances: number;
 	    defaultConnectorType: string;
+	    bridgeCustomDns: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -2075,6 +2300,7 @@ export namespace browser {
 	        this.startStableWindowMs = source["startStableWindowMs"];
 	        this.maxConcurrentInstances = source["maxConcurrentInstances"];
 	        this.defaultConnectorType = source["defaultConnectorType"];
+	        this.bridgeCustomDns = source["bridgeCustomDns"];
 	    }
 	}
 	export class Tab {
@@ -2430,6 +2656,7 @@ export namespace proxy {
 	    enhancedMode: string;
 	    nameserverCount: number;
 	    fallbackCount: number;
+	    proxyServerNameserverCount: number;
 	    xrayServerCount: number;
 	    unsupported: string[];
 	
@@ -2444,6 +2671,7 @@ export namespace proxy {
 	        this.enhancedMode = source["enhancedMode"];
 	        this.nameserverCount = source["nameserverCount"];
 	        this.fallbackCount = source["fallbackCount"];
+	        this.proxyServerNameserverCount = source["proxyServerNameserverCount"];
 	        this.xrayServerCount = source["xrayServerCount"];
 	        this.unsupported = source["unsupported"];
 	    }

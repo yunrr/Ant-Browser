@@ -7,13 +7,14 @@ import (
 )
 
 type DnsDiagnosticSummary struct {
-	HasConfig       bool     `json:"hasConfig"`
-	SourceFormat    string   `json:"sourceFormat"`
-	EnhancedMode    string   `json:"enhancedMode"`
-	NameserverCount int      `json:"nameserverCount"`
-	FallbackCount   int      `json:"fallbackCount"`
-	XrayServerCount int      `json:"xrayServerCount"`
-	Unsupported     []string `json:"unsupported"`
+	HasConfig                  bool     `json:"hasConfig"`
+	SourceFormat               string   `json:"sourceFormat"`
+	EnhancedMode               string   `json:"enhancedMode"`
+	NameserverCount            int      `json:"nameserverCount"`
+	FallbackCount              int      `json:"fallbackCount"`
+	ProxyServerNameserverCount int      `json:"proxyServerNameserverCount"`
+	XrayServerCount            int      `json:"xrayServerCount"`
+	Unsupported                []string `json:"unsupported"`
 }
 
 // parseDnsConfig 解析 DNS 配置，支持两种格式：
@@ -30,18 +31,27 @@ func parseDnsConfig(raw string) map[string]interface{} {
 	}
 
 	type clashDns struct {
-		Enable     bool     `yaml:"enable"`
-		Nameserver []string `yaml:"nameserver"`
-		Fallback   []string `yaml:"fallback"`
+		Enable                bool     `yaml:"enable"`
+		Nameserver            []string `yaml:"nameserver"`
+		Fallback              []string `yaml:"fallback"`
+		ProxyServerNameserver []string `yaml:"proxy-server-nameserver"`
 	}
 	type clashDnsWrapper struct {
 		Dns clashDns `yaml:"dns"`
 	}
 
 	var wrapper clashDnsWrapper
-	if err := yaml.Unmarshal([]byte(raw), &wrapper); err == nil && len(wrapper.Dns.Nameserver) > 0 {
+	if err := yaml.Unmarshal([]byte(raw), &wrapper); err == nil &&
+		(len(wrapper.Dns.Nameserver) > 0 || len(wrapper.Dns.ProxyServerNameserver) > 0 || len(wrapper.Dns.Fallback) > 0) {
 		servers := make([]interface{}, 0)
 		for _, s := range wrapper.Dns.Nameserver {
+			if s = strings.TrimSpace(s); s != "" && isXrayDnsAddr(s) {
+				servers = append(servers, s)
+			}
+		}
+		// xray 没有"仅用于解析代理服务器域名"的独立配置，proxy-server-nameserver
+		// 只能并入全局 servers；桥接只跑单节点，不会影响目标域名分流策略。
+		for _, s := range wrapper.Dns.ProxyServerNameserver {
 			if s = strings.TrimSpace(s); s != "" && isXrayDnsAddr(s) {
 				servers = append(servers, s)
 			}
@@ -92,21 +102,24 @@ func buildDnsDiagnosticSummary(raw string) DnsDiagnosticSummary {
 	}
 	summary := DnsDiagnosticSummary{HasConfig: true, SourceFormat: "list"}
 	type clashDns struct {
-		Enable       bool     `yaml:"enable"`
-		EnhancedMode string   `yaml:"enhanced-mode"`
-		Nameserver   []string `yaml:"nameserver"`
-		Fallback     []string `yaml:"fallback"`
+		Enable                bool     `yaml:"enable"`
+		EnhancedMode          string   `yaml:"enhanced-mode"`
+		Nameserver            []string `yaml:"nameserver"`
+		Fallback              []string `yaml:"fallback"`
+		ProxyServerNameserver []string `yaml:"proxy-server-nameserver"`
 	}
 	type clashDnsWrapper struct {
 		Dns clashDns `yaml:"dns"`
 	}
 	var wrapper clashDnsWrapper
-	if err := yaml.Unmarshal([]byte(raw), &wrapper); err == nil && (len(wrapper.Dns.Nameserver) > 0 || len(wrapper.Dns.Fallback) > 0 || wrapper.Dns.EnhancedMode != "") {
+	if err := yaml.Unmarshal([]byte(raw), &wrapper); err == nil && (len(wrapper.Dns.Nameserver) > 0 || len(wrapper.Dns.Fallback) > 0 || len(wrapper.Dns.ProxyServerNameserver) > 0 || wrapper.Dns.EnhancedMode != "") {
 		summary.SourceFormat = "clash"
 		summary.EnhancedMode = strings.TrimSpace(wrapper.Dns.EnhancedMode)
 		summary.NameserverCount = len(wrapper.Dns.Nameserver)
 		summary.FallbackCount = len(wrapper.Dns.Fallback)
-		for _, server := range append(append([]string{}, wrapper.Dns.Nameserver...), wrapper.Dns.Fallback...) {
+		summary.ProxyServerNameserverCount = len(wrapper.Dns.ProxyServerNameserver)
+		allServers := append(append(append([]string{}, wrapper.Dns.Nameserver...), wrapper.Dns.Fallback...), wrapper.Dns.ProxyServerNameserver...)
+		for _, server := range allServers {
 			server = strings.TrimSpace(server)
 			if server == "" {
 				continue

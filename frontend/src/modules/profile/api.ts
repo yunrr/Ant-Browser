@@ -1,5 +1,6 @@
 import profilePageConfig from '../../config/profile.config'
-import type { AppUpdateCheckResult, AuthorProfile, IconKey, ProfileChannel, ProfilePageData, ProfileProject } from './types'
+import type { AppDownloadedUpdate, AppUpdateCheckResult, AppUpdateInfo, AuthorProfile, IconKey, ProfileChannel, ProfilePageData, ProfileProject, UpdatePendingInfo } from './types'
+import { loadUpdateChannel, loadUpdateProxySelection, type UpdateChannel } from './updatePrefs'
 
 const PROFILE_ICON_KEYS: IconKey[] = [
   'book-open',
@@ -79,6 +80,195 @@ export async function loadCurrentAppVersion(): Promise<string> {
     return typeof config?.version === 'string' ? config.version.trim() : ''
   }
   return ''
+}
+
+function normalizeUpdateInfo(raw: any): AppUpdateInfo {
+  return {
+    ok: raw?.ok === true,
+    currentVersion: typeof raw?.currentVersion === 'string' ? raw.currentVersion.trim() : '',
+    latestVersion: typeof raw?.latestVersion === 'string' ? raw.latestVersion.trim() : '',
+    updateAvailable: raw?.updateAvailable === true,
+    releaseUrl: typeof raw?.releaseUrl === 'string' ? raw.releaseUrl.trim() : '',
+    notesUrl: typeof raw?.notesUrl === 'string' ? raw.notesUrl.trim() : '',
+    force: raw?.force === true,
+    assets: raw?.assets && typeof raw.assets === 'object' ? raw.assets : {},
+    versions: Array.isArray(raw?.versions) ? raw.versions.filter((item: any) => typeof item === 'string' && item) : [],
+    error: typeof raw?.error === 'string' ? raw.error.trim() : '',
+  }
+}
+
+function unsupportedUpdateInfo(error: string): AppUpdateInfo {
+  return {
+    ok: false,
+    currentVersion: '',
+    latestVersion: '',
+    updateAvailable: false,
+    releaseUrl: '',
+    notesUrl: '',
+    force: false,
+    assets: {},
+    error,
+  }
+}
+
+export async function checkAppUpdate(): Promise<AppUpdateInfo> {
+  const bindings: any = await getBindings()
+  const goApp = (window as any).go?.main?.App
+  let raw: any
+  if (bindings?.CheckAppUpdate) {
+    raw = await bindings.CheckAppUpdate()
+  } else if (goApp?.CheckAppUpdate) {
+    raw = await goApp.CheckAppUpdate()
+  } else {
+    return unsupportedUpdateInfo('当前环境不支持更新检查')
+  }
+  return normalizeUpdateInfo(raw)
+}
+
+// 后台检查/旧入口使用上次成功用过的代理与通道：更新清单在 github.com 上，直连被阻断时只能走节点。
+export async function checkAppUpdateWithSavedProxy(): Promise<AppUpdateInfo> {
+  const saved = loadUpdateProxySelection()
+  const channel = loadUpdateChannel()
+  if (saved?.mode === 'pool' && saved.proxyId) {
+    return checkAppUpdateWithChannel('', saved.proxyId, channel)
+  }
+  if (saved?.mode === 'custom' && saved.customProxy.trim()) {
+    return checkAppUpdateWithChannel(saved.customProxy.trim(), '', channel)
+  }
+  return checkAppUpdateWithChannel('', '', channel)
+}
+
+// 检查指定通道（正式 / 预览）；旧构建没有通道方法时退回正式版接口。
+export async function checkAppUpdateWithChannel(proxyConfig: string, proxyId: string, channel: UpdateChannel): Promise<AppUpdateInfo> {
+  const bindings: any = await getBindings()
+  const goApp = (window as any).go?.main?.App
+  let raw: any
+  if (bindings?.CheckAppUpdateWithChannel) {
+    raw = await bindings.CheckAppUpdateWithChannel(proxyConfig, proxyId, channel)
+  } else if (goApp?.CheckAppUpdateWithChannel) {
+    raw = await goApp.CheckAppUpdateWithChannel(proxyConfig, proxyId, channel)
+  } else {
+    return checkAppUpdateWithProxySelection(proxyConfig, proxyId)
+  }
+  return normalizeUpdateInfo(raw)
+}
+
+// 查看指定版本的更新信息；version 为空表示当前通道的最新版本。
+export async function checkAppUpdateVersion(
+  proxyConfig: string,
+  proxyId: string,
+  channel: UpdateChannel,
+  version: string,
+): Promise<AppUpdateInfo> {
+  const bindings: any = await getBindings()
+  const goApp = (window as any).go?.main?.App
+  let raw: any
+  if (bindings?.CheckAppUpdateVersion) {
+    raw = await bindings.CheckAppUpdateVersion(proxyConfig, proxyId, channel, version)
+  } else if (goApp?.CheckAppUpdateVersion) {
+    raw = await goApp.CheckAppUpdateVersion(proxyConfig, proxyId, channel, version)
+  } else {
+    return checkAppUpdateWithChannel(proxyConfig, proxyId, channel)
+  }
+  return normalizeUpdateInfo(raw)
+}
+
+// 检查更新也支持临时指定代理：更新清单在 github.com 上，直连被阻断时只能走节点。
+export async function checkAppUpdateWithProxySelection(proxyConfig: string, proxyId: string): Promise<AppUpdateInfo> {
+  const bindings: any = await getBindings()
+  const goApp = (window as any).go?.main?.App
+  let raw: any
+  if (bindings?.CheckAppUpdateWithProxySelection) {
+    raw = await bindings.CheckAppUpdateWithProxySelection(proxyConfig, proxyId)
+  } else if (goApp?.CheckAppUpdateWithProxySelection) {
+    raw = await goApp.CheckAppUpdateWithProxySelection(proxyConfig, proxyId)
+  } else {
+    return checkAppUpdate()
+  }
+  return normalizeUpdateInfo(raw)
+}
+
+async function invokeUpdateMethod(name: string, ...args: any[]): Promise<boolean> {
+  const bindings: any = await getBindings()
+  const goApp = (window as any).go?.main?.App
+  if (bindings?.[name]) {
+    await bindings[name](...args)
+    return true
+  }
+  if (goApp?.[name]) {
+    await goApp[name](...args)
+    return true
+  }
+  return false
+}
+
+export async function downloadAppUpdate(version: string, assetKey: string): Promise<boolean> {
+  return invokeUpdateMethod('DownloadAppUpdate', version, assetKey)
+}
+
+export async function applyAppUpdate(version: string, assetKey: string): Promise<boolean> {
+  return invokeUpdateMethod('ApplyAppUpdate', version, assetKey)
+}
+
+export async function downloadAppUpdateWithProxy(version: string, assetKey: string, proxyConfig: string): Promise<boolean> {
+  return invokeUpdateMethod('DownloadAppUpdateWithProxy', version, assetKey, proxyConfig)
+}
+
+export async function downloadAppUpdateWithProxySelection(version: string, assetKey: string, proxyConfig: string, proxyId: string): Promise<boolean> {
+  return invokeUpdateMethod('DownloadAppUpdateWithProxySelection', version, assetKey, proxyConfig, proxyId)
+}
+
+// 下载指定通道的更新包；旧构建没有通道方法时退回正式版下载。
+export async function downloadAppUpdateWithChannel(
+  version: string,
+  assetKey: string,
+  proxyConfig: string,
+  proxyId: string,
+  channel: UpdateChannel,
+): Promise<boolean> {
+  const started = await invokeUpdateMethod('DownloadAppUpdateWithChannel', version, assetKey, proxyConfig, proxyId, channel)
+  if (started) return true
+  return downloadAppUpdateWithProxySelection(version, assetKey, proxyConfig, proxyId)
+}
+
+export async function applyPendingAppUpdate(): Promise<boolean> {
+  return invokeUpdateMethod('ApplyPendingAppUpdate')
+}
+
+export async function getPendingAppUpdate(): Promise<UpdatePendingInfo | null> {
+  const bindings: any = await getBindings()
+  const goApp = (window as any).go?.main?.App
+  let raw: any
+  if (bindings?.GetPendingAppUpdate) {
+    raw = await bindings.GetPendingAppUpdate()
+  } else if (goApp?.GetPendingAppUpdate) {
+    raw = await goApp.GetPendingAppUpdate()
+  }
+  return raw?.installerPath ? raw as UpdatePendingInfo : null
+}
+
+export async function clearPendingAppUpdate(): Promise<boolean> {
+  return invokeUpdateMethod('ClearPendingAppUpdate')
+}
+
+export async function getDownloadedAppUpdate(): Promise<AppDownloadedUpdate | null> {
+  const bindings: any = await getBindings()
+  const goApp = (window as any).go?.main?.App
+  let raw: any
+  if (bindings?.GetDownloadedAppUpdate) {
+    raw = await bindings.GetDownloadedAppUpdate()
+  } else if (goApp?.GetDownloadedAppUpdate) {
+    raw = await goApp.GetDownloadedAppUpdate()
+  }
+  return raw?.installerPath ? raw as AppDownloadedUpdate : null
+}
+
+export async function clearDownloadedAppUpdate(): Promise<boolean> {
+  return invokeUpdateMethod('ClearDownloadedAppUpdate')
+}
+
+export async function openUpdatePackageLocation(): Promise<boolean> {
+  return invokeUpdateMethod('OpenUpdatePackageLocation')
 }
 
 export async function checkForUpdates(): Promise<AppUpdateCheckResult> {

@@ -1,0 +1,578 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-11-19",
+  "notes": [
+    "证据来源：上游主分支参数表、各版本新特性说明，以及项目内 144 实测记录。",
+    "彩色为实测结论，蓝色为文档明确，灰色为策略推断，问号为未验证。",
+    "未标注引入版本的参数按策略保留，不声明低版本内核支持。"
+  ],
+  "versions": [
+    {
+      "key": "v130",
+      "label": "130 及以下",
+      "minMajor": 0,
+      "maxMajor": 130,
+      "source": "文档推断",
+      "note": "上游最低发布为 132；本区间按各参数引入版本推断"
+    },
+    {
+      "key": "v131",
+      "label": "131–138",
+      "minMajor": 131,
+      "maxMajor": 138,
+      "source": "文档依据",
+      "note": "品牌参数可用，GPU 独立参数尚未引入"
+    },
+    {
+      "key": "v139",
+      "label": "139–141",
+      "minMajor": 139,
+      "maxMajor": 141,
+      "source": "文档依据",
+      "note": "GPU 厂商与渲染器参数可用"
+    },
+    {
+      "key": "v142",
+      "label": "142–143",
+      "minMajor": 142,
+      "maxMajor": 143,
+      "source": "文档依据",
+      "note": "GPU 伪装开关可用"
+    },
+    {
+      "key": "v144",
+      "label": "144–149",
+      "minMajor": 144,
+      "maxMajor": 149,
+      "source": "文档 + 实测",
+      "note": "GPU 三参数移除，关闭伪装新增，屏幕与字体实测无效"
+    },
+    {
+      "key": "v150",
+      "label": "150 及以上",
+      "minMajor": 150,
+      "maxMajor": 0,
+      "source": "文档 + 反馈",
+      "note": "延续 144；canvas 噪声有崩溃与越界反馈"
+    }
+  ],
+  "groups": [
+    {
+      "key": "display",
+      "label": "显示与图形",
+      "items": [
+        {
+          "arg": "--fingerprint-screen-width",
+          "label": "屏幕宽度",
+          "sample": "--fingerprint-screen-width=1920",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unsupported_measured"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        },
+        {
+          "arg": "--fingerprint-screen-height",
+          "label": "屏幕高度",
+          "sample": "--fingerprint-screen-height=1080",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unsupported_measured"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        },
+        {
+          "arg": "--fingerprint-device-scale-factor",
+          "label": "缩放比",
+          "sample": "--fingerprint-device-scale-factor=1.25",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unsupported_measured"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        },
+        {
+          "arg": "--fingerprint-color-depth",
+          "label": "色深",
+          "sample": "--fingerprint-color-depth=24",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unsupported_measured"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        },
+        {
+          "arg": "--fingerprint-gpu-vendor",
+          "label": "GPU 厂商",
+          "sample": "--fingerprint-gpu-vendor=Google Inc.",
+          "support": {
+            "v130": "unsupported_documented",
+            "v131": "unsupported_documented",
+            "v139": "supported_documented",
+            "v142": "supported_documented",
+            "v144": "unsupported_documented",
+            "v150": "unsupported_documented"
+          },
+          "note": "官方 139 起支持，144 移除；139 之前未声明"
+        },
+        {
+          "arg": "--fingerprint-gpu-renderer",
+          "label": "GPU 渲染器",
+          "sample": "--fingerprint-gpu-renderer=ANGLE (Intel)",
+          "support": {
+            "v130": "unsupported_documented",
+            "v131": "unsupported_documented",
+            "v139": "supported_documented",
+            "v142": "supported_documented",
+            "v144": "unsupported_documented",
+            "v150": "unsupported_documented"
+          },
+          "note": "官方 139 起支持，144 移除；139 之前未声明"
+        },
+        {
+          "arg": "--fingerprint-webgl-vendor",
+          "label": "WebGL 厂商",
+          "sample": "--fingerprint-webgl-vendor=Google Inc.",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unknown"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        },
+        {
+          "arg": "--fingerprint-webgl-renderer",
+          "label": "WebGL 渲染器",
+          "sample": "--fingerprint-webgl-renderer=ANGLE (Intel)",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unknown"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        }
+      ]
+    },
+    {
+      "key": "font-locale",
+      "label": "字体与语言",
+      "items": [
+        {
+          "arg": "--fingerprint-fonts",
+          "label": "字体列表（旧参数）",
+          "sample": "--fingerprint-fonts=Arial,Segoe UI",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unsupported_measured"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        },
+        {
+          "arg": "--fingerprint-font-list",
+          "label": "字体列表",
+          "sample": "--fingerprint-font-list=Arial,Segoe UI",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unsupported_measured"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        },
+        {
+          "arg": "--lang",
+          "label": "语言",
+          "sample": "--lang=en-US",
+          "support": {
+            "v130": "supported_policy",
+            "v131": "supported_policy",
+            "v139": "supported_policy",
+            "v142": "supported_policy",
+            "v144": "supported_policy",
+            "v150": "supported_policy"
+          },
+          "note": "官方参数表列出，但未标注引入版本；低版本支持情况未验证"
+        },
+        {
+          "arg": "--accept-lang",
+          "label": "语言列表",
+          "sample": "--accept-lang=en-US,en",
+          "support": {
+            "v130": "supported_policy",
+            "v131": "supported_policy",
+            "v139": "supported_policy",
+            "v142": "supported_policy",
+            "v144": "supported_policy",
+            "v150": "supported_policy"
+          },
+          "note": "官方参数表列出，但未标注引入版本；低版本支持情况未验证"
+        },
+        {
+          "arg": "--timezone",
+          "label": "时区",
+          "sample": "--timezone=America/New_York",
+          "support": {
+            "v130": "supported_policy",
+            "v131": "supported_policy",
+            "v139": "supported_policy",
+            "v142": "supported_policy",
+            "v144": "supported_policy",
+            "v150": "supported_policy"
+          },
+          "note": "官方参数表列出，但未标注引入版本；低版本支持情况未验证"
+        }
+      ]
+    },
+    {
+      "key": "hardware",
+      "label": "硬件与设备",
+      "items": [
+        {
+          "arg": "--fingerprint-hardware-concurrency",
+          "label": "CPU 核心数",
+          "sample": "--fingerprint-hardware-concurrency=8",
+          "support": {
+            "v130": "supported_policy",
+            "v131": "supported_policy",
+            "v139": "supported_policy",
+            "v142": "supported_policy",
+            "v144": "supported_policy",
+            "v150": "supported_policy"
+          },
+          "note": "官方参数表列出，但未标注引入版本；低版本支持情况未验证"
+        },
+        {
+          "arg": "--fingerprint-device-memory",
+          "label": "设备内存",
+          "sample": "--fingerprint-device-memory=8",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unknown"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        },
+        {
+          "arg": "--fingerprint-touch-points",
+          "label": "触控点",
+          "sample": "--fingerprint-touch-points=0",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unknown"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        },
+        {
+          "arg": "--fingerprint-media-devices",
+          "label": "媒体设备",
+          "sample": "--fingerprint-media-devices=2",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unknown"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        },
+        {
+          "arg": "--fingerprint-audio-noise",
+          "label": "音频噪声",
+          "sample": "--fingerprint-audio-noise=0.1",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unknown"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        },
+        {
+          "arg": "--fingerprint-location",
+          "label": "地理位置",
+          "sample": "--fingerprint-location=40.7,-74.0",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unknown"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        }
+      ]
+    },
+    {
+      "key": "noise",
+      "label": "噪声与反检测",
+      "items": [
+        {
+          "arg": "--fingerprint",
+          "label": "指纹种子",
+          "sample": "--fingerprint=424242",
+          "support": {
+            "v130": "supported_policy",
+            "v131": "supported_policy",
+            "v139": "supported_policy",
+            "v142": "supported_policy",
+            "v144": "supported_policy",
+            "v150": "supported_policy"
+          },
+          "note": "官方参数表列出，但未标注引入版本；低版本支持情况未验证"
+        },
+        {
+          "arg": "--fingerprint-brand",
+          "label": "浏览器品牌",
+          "sample": "--fingerprint-brand=Chrome",
+          "support": {
+            "v130": "unsupported_documented",
+            "v131": "supported_documented",
+            "v139": "supported_documented",
+            "v142": "supported_documented",
+            "v144": "supported_documented",
+            "v150": "supported_documented"
+          },
+          "note": "官方参数表从 131 才引入，131 起支持"
+        },
+        {
+          "arg": "--fingerprint-brand-version",
+          "label": "品牌版本",
+          "sample": "--fingerprint-brand-version=150",
+          "support": {
+            "v130": "unsupported_documented",
+            "v131": "supported_documented",
+            "v139": "supported_documented",
+            "v142": "supported_documented",
+            "v144": "supported_documented",
+            "v150": "supported_documented"
+          },
+          "note": "官方参数表从 131 才引入，131 起支持"
+        },
+        {
+          "arg": "--fingerprint-platform",
+          "label": "平台",
+          "sample": "--fingerprint-platform=windows",
+          "support": {
+            "v130": "supported_policy",
+            "v131": "supported_policy",
+            "v139": "supported_policy",
+            "v142": "supported_policy",
+            "v144": "supported_policy",
+            "v150": "supported_policy"
+          },
+          "note": "官方参数表列出，但未标注引入版本；低版本支持情况未验证"
+        },
+        {
+          "arg": "--fingerprint-platform-version",
+          "label": "系统版本",
+          "sample": "--fingerprint-platform-version=10.0.0",
+          "support": {
+            "v130": "supported_policy",
+            "v131": "supported_policy",
+            "v139": "supported_policy",
+            "v142": "supported_policy",
+            "v144": "supported_policy",
+            "v150": "supported_policy"
+          },
+          "note": "官方参数表列出，但未标注引入版本；低版本支持情况未验证"
+        },
+        {
+          "arg": "--fingerprinting-canvas-image-data-noise",
+          "label": "Canvas 图像噪声",
+          "sample": "--fingerprinting-canvas-image-data-noise=true",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "supported_policy",
+            "v150": "supported_policy"
+          },
+          "note": "上游文档未列出；144 实测内核接受，148/150 有崩溃与越界反馈"
+        },
+        {
+          "arg": "--fingerprint-canvas-noise",
+          "label": "Canvas 图像噪声（旧参数）",
+          "sample": "--fingerprint-canvas-noise=1",
+          "runtimeArg": "--fingerprinting-canvas-image-data-noise",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "converted",
+            "v150": "converted"
+          },
+          "note": "上游文档未列出；应用在 144 及以上会转换为现行参数名"
+        },
+        {
+          "arg": "--fingerprinting-client-rects-noise",
+          "label": "ClientRects 噪声",
+          "sample": "--fingerprinting-client-rects-noise=true",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "supported_policy",
+            "v150": "supported_policy"
+          },
+          "note": "上游文档未列出；144 实测内核接受，148/150 有崩溃与越界反馈"
+        },
+        {
+          "arg": "--fingerprint-client-rects-noise",
+          "label": "ClientRects 噪声（旧参数）",
+          "sample": "--fingerprint-client-rects-noise=1",
+          "runtimeArg": "--fingerprinting-client-rects-noise",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "converted",
+            "v150": "converted"
+          },
+          "note": "上游文档未列出；应用在 144 及以上会转换为现行参数名"
+        },
+        {
+          "arg": "--fingerprinting-canvas-measuretext-noise",
+          "label": "Canvas 测宽噪声",
+          "sample": "--fingerprinting-canvas-measuretext-noise=true",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unknown"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        },
+        {
+          "arg": "--disable-spoofing",
+          "label": "排除伪装",
+          "sample": "--disable-spoofing=font",
+          "support": {
+            "v130": "unsupported_documented",
+            "v131": "unsupported_documented",
+            "v139": "unsupported_documented",
+            "v142": "unsupported_documented",
+            "v144": "supported_documented",
+            "v150": "supported_documented"
+          },
+          "note": "官方 144 新增；可关闭 font/audio/canvas/clientrects/gpu"
+        },
+        {
+          "arg": "--disable-gpu-fingerprint",
+          "label": "GPU 伪装开关",
+          "sample": "--disable-gpu-fingerprint",
+          "runtimeArg": "--disable-spoofing=gpu",
+          "support": {
+            "v130": "unsupported_documented",
+            "v131": "unsupported_documented",
+            "v139": "unsupported_documented",
+            "v142": "supported_documented",
+            "v144": "unsupported_documented",
+            "v150": "unsupported_documented"
+          },
+          "note": "官方 142 起支持，144 移除；142 之前未声明"
+        },
+        {
+          "arg": "--disable-non-proxied-udp",
+          "label": "WebRTC",
+          "sample": "--disable-non-proxied-udp",
+          "support": {
+            "v130": "supported_policy",
+            "v131": "supported_policy",
+            "v139": "supported_policy",
+            "v142": "supported_policy",
+            "v144": "supported_policy",
+            "v150": "supported_policy"
+          },
+          "note": "官方参数表列出，但未标注引入版本；低版本支持情况未验证"
+        },
+        {
+          "arg": "--webrtc-ip-handling-policy",
+          "label": "WebRTC 策略",
+          "sample": "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+          "support": {
+            "v130": "supported_policy",
+            "v131": "supported_policy",
+            "v139": "supported_policy",
+            "v142": "supported_policy",
+            "v144": "supported_policy",
+            "v150": "supported_policy"
+          },
+          "note": "浏览器标准参数，非指纹补丁"
+        },
+        {
+          "arg": "--window-size",
+          "label": "窗口大小",
+          "sample": "--window-size=1280,720",
+          "support": {
+            "v130": "supported_policy",
+            "v131": "supported_policy",
+            "v139": "supported_policy",
+            "v142": "supported_policy",
+            "v144": "supported_policy",
+            "v150": "supported_policy"
+          },
+          "note": "浏览器标准参数，非指纹补丁"
+        },
+        {
+          "arg": "--fingerprint-do-not-track",
+          "label": "Do Not Track",
+          "sample": "--fingerprint-do-not-track=1",
+          "support": {
+            "v130": "unknown",
+            "v131": "unknown",
+            "v139": "unknown",
+            "v142": "unknown",
+            "v144": "unsupported_measured",
+            "v150": "unknown"
+          },
+          "note": "上游文档从未列出；144 本机实测无效，150 仅屏幕与字体有反馈"
+        }
+      ]
+    }
+  ]
+}

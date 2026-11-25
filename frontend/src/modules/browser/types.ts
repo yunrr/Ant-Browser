@@ -135,6 +135,43 @@ export interface BrowserFingerprintCapabilityReport {
   warnings: string[]
 }
 
+export type BrowserFingerprintCapabilitySupport = 'supported' | 'supported_measured' | 'supported_documented' | 'supported_policy' | 'unsupported' | 'unsupported_measured' | 'unsupported_documented' | 'unsupported_policy' | 'converted' | 'unknown'
+
+export interface BrowserFingerprintCapabilityVersion {
+  key: string
+  label: string
+  minMajor: number
+  maxMajor: number
+  source: string
+  note: string
+}
+
+export interface BrowserFingerprintCapabilityItem {
+  arg: string
+  label: string
+  sample: string
+  runtimeArg: string
+  support: Record<string, BrowserFingerprintCapabilitySupport>
+  note: string
+}
+
+export interface BrowserFingerprintCapabilityGroup {
+  key: string
+  label: string
+  items: BrowserFingerprintCapabilityItem[]
+}
+
+export interface BrowserFingerprintCapabilityTable {
+  schemaVersion: number
+  updatedAt: string
+  notes: string[]
+  currentVersionKey: string
+  currentMajor: number
+  versions: BrowserFingerprintCapabilityVersion[]
+  groups: BrowserFingerprintCapabilityGroup[]
+  warnings: string[]
+}
+
 export interface BrowserProfilePackageExportResult {
   cancelled: boolean
   zipPath: string
@@ -263,6 +300,8 @@ export interface BrowserSettings {
   maxConcurrentInstances: number
   // xray 表示 Xray + sing-box 组合连接栈；mihomo 表示独立 Mihomo 连接栈。
   defaultConnectorType: 'xray' | 'mihomo' | string
+  /** 全局自定义桥接 DNS；留空则使用节点/订阅 DNS。每行一个地址或整段 dns: YAML */
+  bridgeCustomDns: string
 }
 
 export interface ProxyCheckTarget {

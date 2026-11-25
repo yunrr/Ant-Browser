@@ -1,9 +1,9 @@
-import { useMemo, useEffect, useState } from 'react'
+import { Fragment, useMemo, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ChevronDown, ChevronUp, FolderOpen, HelpCircle, Layers, ShieldCheck } from 'lucide-react'
 import { Button, Card, ConfirmModal, FormItem, Input, Modal, Select, Textarea, toast } from '../../../shared/components'
-import type { BrowserCore, BrowserFingerprintCapabilityReport, BrowserFingerprintCapabilityRow, BrowserFingerprintCheckResult, BrowserProfileInput, BrowserProxy, BrowserProxyVirtualGroup, BrowserGroup, ProxyLocationResolveResult } from '../types'
-import { browserProxyResolveLocation, checkBrowserProfileFingerprint, createBrowserProfile, fetchAllTags, fetchBrowserCores, fetchBrowserProfileFingerprintMatrix, fetchBrowserProfiles, fetchBrowserProxies, fetchBrowserProxyVirtualGroups, fetchBrowserSettings, fetchGroups, openBrowserFingerprintCheck, openUserDataDir, updateBrowserProfile, validateProxyConfig } from '../api'
+import type { BrowserCore, BrowserFingerprintCapabilityReport, BrowserFingerprintCapabilityRow, BrowserFingerprintCapabilityTable, BrowserFingerprintCheckResult, BrowserProfileInput, BrowserProxy, BrowserProxyVirtualGroup, BrowserGroup, ProxyLocationResolveResult } from '../types'
+import { browserProxyResolveLocation, checkBrowserProfileFingerprint, createBrowserProfile, fetchAllTags, fetchBrowserCores, fetchBrowserFingerprintCapabilityTable, fetchBrowserProfileFingerprintMatrix, fetchBrowserProfiles, fetchBrowserProxies, fetchBrowserProxyVirtualGroups, fetchBrowserSettings, fetchGroups, openBrowserFingerprintCheck, openUserDataDir, updateBrowserProfile, validateProxyConfig } from '../api'
 import { FingerprintPanel } from '../components/FingerprintPanel'
 import { applyLocaleToFingerprintArgs, validateFingerprintArgs, withAdaptiveDefaultWindowSize } from '../utils/fingerprintSerializer'
 import { TagInput } from '../components/TagInput'
@@ -239,6 +239,132 @@ function FingerprintMatrixReport({ report }: { report: BrowserFingerprintCapabil
   )
 }
 
+const capabilitySupportLabels: Record<string, string> = {
+  supported: '✓',
+  supported_measured: '✓',
+  supported_documented: '✓',
+  supported_policy: '✓',
+  unsupported: '✗',
+  unsupported_measured: '✗',
+  unsupported_documented: '✗',
+  unsupported_policy: '✗',
+  converted: '转',
+  unknown: '?',
+}
+
+const capabilityEvidenceLabels: Record<string, string> = {
+  supported: '实测',
+  supported_measured: '实测',
+  unsupported: '实测',
+  unsupported_measured: '实测',
+  supported_documented: '文档',
+  unsupported_documented: '文档',
+  supported_policy: '策略',
+  unsupported_policy: '策略',
+  unknown: '未验证',
+}
+
+function capabilitySupportClass(status: string) {
+  if (status === 'supported' || status === 'supported_measured') return 'text-emerald-600'
+  if (status === 'unsupported' || status === 'unsupported_measured') return 'text-rose-600'
+  if (status === 'supported_documented' || status === 'unsupported_documented') return 'text-blue-600'
+  if (status === 'converted') return 'text-amber-600'
+  return 'text-slate-400'
+}
+
+function FingerprintCapabilityTableReport({ table }: { table: BrowserFingerprintCapabilityTable | null }) {
+  if (!table) {
+    return (
+      <div className="mt-4 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-muted)]">
+        正在读取内核能力表
+      </div>
+    )
+  }
+  const versions = table.versions || []
+  if (versions.length === 0) {
+    return (
+      <div className="mt-4 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-muted)]">
+        {table.warnings?.[0] || '暂无能力表数据'}
+      </div>
+    )
+  }
+  const currentVersion = versions.find((version) => version.key === table.currentVersionKey)
+  return (
+    <div className="mt-4 rounded-lg border border-[var(--color-border)] overflow-hidden">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-1 px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg-hover)]">
+        <div className="text-sm font-medium text-[var(--color-text-primary)]">内核能力表</div>
+        <div className="text-xs text-[var(--color-text-muted)]">
+          当前内核：{currentVersion ? currentVersion.label : '未识别'} · 更新 {table.updatedAt || '-'}
+        </div>
+      </div>
+      {(table.notes?.length > 0 || table.warnings?.length > 0) && (
+        <div className="px-3 py-2 border-b border-[var(--color-border)] bg-amber-50 text-xs text-amber-700 space-y-1">
+          {table.notes?.map((note, index) => <div key={`note-${index}`}>{note}</div>)}
+          {table.warnings?.map((warning, index) => <div key={`warning-${index}`}>{warning}</div>)}
+        </div>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[var(--color-border)] bg-[var(--color-bg-hover)] text-xs text-[var(--color-text-muted)]">
+              <th className="px-3 py-2 text-left font-medium min-w-[220px]">参数</th>
+              {versions.map((version) => (
+                <th
+                  key={version.key}
+                  className={`px-3 py-2 text-center font-medium ${version.key === table.currentVersionKey ? 'text-[var(--color-text-primary)]' : ''}`}
+                >
+                  {version.label}
+                  {version.key === table.currentVersionKey && <div className="text-[10px] font-normal">当前</div>}
+                  {version.key !== table.currentVersionKey && version.source && <div className="text-[10px] font-normal">{version.source}</div>}
+                </th>
+              ))}
+              <th className="px-3 py-2 text-left font-medium min-w-[240px]">说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            {table.groups.map((group) => (
+              <Fragment key={group.key}>
+                <tr className="border-b border-[var(--color-border)] bg-[var(--color-bg-hover)]">
+                  <td colSpan={versions.length + 2} className="px-3 py-1.5 text-xs font-medium text-[var(--color-text-secondary)]">{group.label}</td>
+                </tr>
+                {group.items.map((item) => (
+                  <tr key={item.arg} className="border-b border-[var(--color-border)] last:border-b-0">
+                    <td className="px-3 py-2">
+                      <div className="text-[var(--color-text-primary)]">{item.label}</div>
+                      <div className="font-mono text-xs break-all text-[var(--color-text-muted)]" title={item.sample || item.arg}>{item.arg}</div>
+                    </td>
+                    {versions.map((version) => {
+                      const status = item.support?.[version.key] || 'unknown'
+                      return (
+                        <td
+                          key={version.key}
+                          className={`px-3 py-2 text-center align-top ${version.key === table.currentVersionKey ? 'bg-[var(--color-bg-hover)]' : ''}`}
+                        >
+                          <span className={`text-base font-semibold ${capabilitySupportClass(status)}`}>{capabilitySupportLabels[status] || '?'}</span>
+                          {capabilityEvidenceLabels[status] && (
+                            <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{capabilityEvidenceLabels[status]}</div>
+                          )}
+                          {status === 'converted' && item.runtimeArg && (
+                            <div className="mt-1 font-mono text-[10px] break-all text-[var(--color-text-muted)]">{item.runtimeArg}</div>
+                          )}
+                        </td>
+                      )
+                    })}
+                    <td className="px-3 py-2 text-xs text-[var(--color-text-secondary)]">{item.note || '-'}</td>
+                  </tr>
+                ))}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="px-3 py-2 border-t border-[var(--color-border)] text-xs text-[var(--color-text-muted)]">
+        <span className="text-emerald-600">✓</span> 实测生效 · <span className="text-rose-600">✗</span> 实测无效 · <span className="text-blue-600">✓/✗</span> 文档明确 · <span className="text-slate-400">✓/✗</span> 策略推断 · <span className="text-amber-600">转</span> 自动转换 · <span className="text-slate-400">?</span> 未验证
+      </div>
+    </div>
+  )
+}
+
 function resolvePoolProxySelection(
   proxyId: string,
   proxyConfig: string,
@@ -339,6 +465,7 @@ export function BrowserEditPage() {
   const [fingerprintCheckOpen, setFingerprintCheckOpen] = useState(false)
   const [fingerprintMatrix, setFingerprintMatrix] = useState<BrowserFingerprintCapabilityReport | null>(null)
   const [fingerprintMatrixOpen, setFingerprintMatrixOpen] = useState(false)
+  const [capabilityTable, setCapabilityTable] = useState<BrowserFingerprintCapabilityTable | null>(null)
   const [launchArgsOpen, setLaunchArgsOpen] = useState(false)
   const [launchArgsHelpOpen, setLaunchArgsHelpOpen] = useState(false)
 
@@ -434,6 +561,20 @@ export function BrowserEditPage() {
     loadMatrix()
     return () => { cancelled = true }
   }, [id, isCreate, formData.coreId, fingerprintArgsKey])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadCapabilityTable = async () => {
+      try {
+        const table = await fetchBrowserFingerprintCapabilityTable(isCreate ? '' : id || '', formData.coreId)
+        if (!cancelled) setCapabilityTable(table)
+      } catch {
+        if (!cancelled) setCapabilityTable(null)
+      }
+    }
+    loadCapabilityTable()
+    return () => { cancelled = true }
+  }, [id, isCreate, formData.coreId])
 
   const handleChange = (field: keyof BrowserProfileInput, value: string | string[] | number) => {
     setIsDirty(true)
@@ -843,8 +984,8 @@ export function BrowserEditPage() {
               variant="secondary"
               size="sm"
               onClick={() => setFingerprintMatrixOpen(true)}
-              title="查看版本适配矩阵"
-              aria-label="查看版本适配矩阵"
+              title="查看内核能力表"
+              aria-label="查看内核能力表"
             >
               <HelpCircle className="w-4 h-4" />
             </Button>
@@ -1027,10 +1168,11 @@ export function BrowserEditPage() {
       <Modal
         open={fingerprintMatrixOpen}
         onClose={() => setFingerprintMatrixOpen(false)}
-        title="版本适配矩阵"
-        width="980px"
+        title="内核能力表"
+        width="1100px"
         footer={<Button variant="secondary" onClick={() => setFingerprintMatrixOpen(false)}>关闭</Button>}
       >
+        <FingerprintCapabilityTableReport table={capabilityTable} />
         <FingerprintMatrixReport report={fingerprintMatrix} />
       </Modal>
 

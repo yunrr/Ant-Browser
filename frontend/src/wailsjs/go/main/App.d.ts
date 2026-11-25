@@ -10,6 +10,10 @@ import {logger} from '../models';
 import {launchcode} from '../models';
 import {time} from '../models';
 
+export function ApplyAppUpdate(arg1:string,arg2:string):Promise<void>;
+
+export function ApplyPendingAppUpdate():Promise<void>;
+
 export function AutomationDemoCreateProfile():Promise<Record<string, any>>;
 
 export function AutomationDemoCreateProfileWithOptions(arg1:string):Promise<Record<string, any>>;
@@ -222,6 +226,8 @@ export function BrowserProfileExtensionGet(arg1:string):Promise<browser.ProfileE
 
 export function BrowserProfileExtensionSave(arg1:string,arg2:Array<string>,arg3:boolean):Promise<browser.ProfileExtensionSettings>;
 
+export function BrowserProfileFingerprintCapabilityTable(arg1:string,arg2:string):Promise<backend.BrowserFingerprintCapabilityTable>;
+
 export function BrowserProfileFingerprintCheck(arg1:string):Promise<backend.BrowserFingerprintCheckResult>;
 
 export function BrowserProfileFingerprintMatrix(arg1:string,arg2:string,arg3:Array<string>):Promise<backend.BrowserFingerprintCapabilityReport>;
@@ -328,15 +334,35 @@ export function BrowserSnapshotList(arg1:string):Promise<Array<backend.SnapshotI
 
 export function BrowserSnapshotRestore(arg1:string,arg2:string):Promise<void>;
 
+export function CheckAppUpdate():Promise<backend.AppUpdateInfo>;
+
+export function CheckAppUpdateVersion(arg1:string,arg2:string,arg3:string,arg4:string):Promise<backend.AppUpdateInfo>;
+
+export function CheckAppUpdateWithChannel(arg1:string,arg2:string,arg3:string):Promise<backend.AppUpdateInfo>;
+
+export function CheckAppUpdateWithProxySelection(arg1:string,arg2:string):Promise<backend.AppUpdateInfo>;
+
 export function CheckForUpdates():Promise<Record<string, any>>;
 
 export function ClearAppLogs():Promise<void>;
+
+export function ClearDownloadedAppUpdate():Promise<void>;
+
+export function ClearPendingAppUpdate():Promise<void>;
 
 export function CreateGroup(arg1:browser.GroupInput):Promise<browser.Group>;
 
 export function DeleteBrowserProxyVirtualGroup(arg1:string):Promise<void>;
 
 export function DeleteGroup(arg1:string):Promise<void>;
+
+export function DownloadAppUpdate(arg1:string,arg2:string):Promise<void>;
+
+export function DownloadAppUpdateWithChannel(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;
+
+export function DownloadAppUpdateWithProxy(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function DownloadAppUpdateWithProxySelection(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function FetchRemoteAuthorProfile(arg1:string,arg2:number):Promise<Record<string, any>>;
 
@@ -356,6 +382,8 @@ export function GetBrowserSettings():Promise<browser.Settings>;
 
 export function GetDashboardStats():Promise<Record<string, any>>;
 
+export function GetDownloadedAppUpdate():Promise<backend.AppDownloadedUpdate>;
+
 export function GetInterceptor():Promise<logger.MethodInterceptor>;
 
 export function GetLaunchServerInfo():Promise<Record<string, any>>;
@@ -363,6 +391,8 @@ export function GetLaunchServerInfo():Promise<Record<string, any>>;
 export function GetLogLevel():Promise<string>;
 
 export function GetMemoryStats():Promise<Record<string, any>>;
+
+export function GetPendingAppUpdate():Promise<backend.UpdatePendingInfo>;
 
 export function GetProxyCheckSettings():Promise<config.ProxyCheckConfig>;
 
@@ -374,11 +404,15 @@ export function ListGroups():Promise<Array<browser.GroupWithCount>>;
 
 export function MoveInstancesToGroup(arg1:Array<string>,arg2:string):Promise<void>;
 
+export function NotifyPendingAppUpdate():Promise<void>;
+
 export function OpenBackupPath(arg1:string):Promise<void>;
 
 export function OpenCorePath(arg1:string):Promise<void>;
 
 export function OpenProjectRoot():Promise<void>;
+
+export function OpenUpdatePackageLocation():Promise<void>;
 
 export function OpenUserDataDir(arg1:string):Promise<void>;
 

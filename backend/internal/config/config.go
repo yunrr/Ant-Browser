@@ -61,6 +61,38 @@ func (c ProxySourceRefreshConfig) IsEnabled() bool {
 	return c.Enabled == nil || *c.Enabled
 }
 
+// UpdateConfig 应用更新检查与安装。
+type UpdateConfig struct {
+	Enabled            *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	AutoCheck          *bool  `yaml:"auto_check,omitempty" json:"autoCheck,omitempty"`
+	CheckIntervalHours int    `yaml:"check_interval_hours,omitempty" json:"checkIntervalHours,omitempty"`
+	Repo               string `yaml:"repo,omitempty" json:"repo,omitempty"`
+	Proxy              string `yaml:"proxy,omitempty" json:"proxy,omitempty"`
+	VerifyChecksum     *bool  `yaml:"verify_checksum,omitempty" json:"verifyChecksum,omitempty"`
+}
+
+// IsEnabled 未显式配置时默认开启更新检查。
+func (c UpdateConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+// ShouldAutoCheck 未显式配置时默认开启自动检查。
+func (c UpdateConfig) ShouldAutoCheck() bool {
+	return c.AutoCheck == nil || *c.AutoCheck
+}
+
+// VerifySHA256 未显式配置时默认校验下载包。
+func (c UpdateConfig) VerifySHA256() bool {
+	return c.VerifyChecksum == nil || *c.VerifyChecksum
+}
+
+func (c UpdateConfig) IntervalHours() int {
+	if c.CheckIntervalHours <= 0 {
+		return 24
+	}
+	return c.CheckIntervalHours
+}
+
 // Config 应用配置
 type Config struct {
 	Database           DatabaseConfig           `yaml:"database"`
@@ -73,6 +105,7 @@ type Config struct {
 	LaunchServer       LaunchServerConfig       `yaml:"launch_server"`
 	Automation         AutomationConfig         `yaml:"automation"`
 	Backup             BackupConfig             `yaml:"backup"`
+	Update             UpdateConfig             `yaml:"update,omitempty"`
 }
 
 // SourceAlignPair 一次对齐明细：旧节点名 → 新节点名及匹配方式。
@@ -268,12 +301,23 @@ type BrowserConfig struct {
 	CoreRoot             string                         `yaml:"core_root,omitempty"`
 	DefaultCoreId        string                         `yaml:"default_core_id,omitempty"`
 	DefaultConnectorType string                         `yaml:"default_connector_type,omitempty"`
+	// BridgeCustomDNS 全局自定义桥接 DNS：非空时覆盖节点/订阅 DNS，
+	// 支持每行一个地址或整段 Clash dns: YAML；留空则使用节点自带的订阅 DNS。
+	BridgeCustomDNS string `yaml:"bridge_custom_dns,omitempty" json:"bridgeCustomDns,omitempty"`
 	// ProxyWorkdirRetentionDays 代理内核工作目录保留天数；<=0 使用默认值 3。
 	ProxyWorkdirRetentionDays int                  `yaml:"proxy_workdir_retention_days,omitempty"`
 	Environments              []BrowserEnvironment `yaml:"environments,omitempty"`
 	// ProxySourceIgnoredNames 按 sourceId 记录订阅刷新时要跳过的节点名（导入预览里被用户取消勾选的节点）。
 	// 之前只存在前端 localStorage，后端定时刷新无法感知，导致被忽略节点反复“复活”。
 	ProxySourceIgnoredNames map[string][]string `yaml:"proxy_source_ignored_names,omitempty" json:"proxySourceIgnoredNames,omitempty"`
+}
+
+// BridgeCustomDNSValue 返回全局自定义桥接 DNS；未配置时返回空串（回退节点/订阅 DNS）。
+func BridgeCustomDNSValue(cfg *Config) string {
+	if cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Browser.BridgeCustomDNS)
 }
 
 type BrowserCore struct {
