@@ -92,6 +92,11 @@ __pycache__/
 # Local runtime cache
 .tmp/
 
+# Local agent workflow artifacts (PTMC runs, project memory, code index)
+.mcode-flow/
+.projectmem/
+.codegraph/
+
 # Test outputs / coverage
 coverage/
 *.out
