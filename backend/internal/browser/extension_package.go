@@ -192,7 +192,21 @@ func crx3PublicKeyFromHeader(header []byte) []byte {
 	if len(keys) == 0 {
 		return nil
 	}
-	return keys[0]
+	declaredID := crx3DeclaredIDFromHeader(header)
+	if len(declaredID) != 16 {
+		// 没有声明 ID 的 CRX3 头无法判断哪个公钥代表插件身份，保持原有的首个公钥行为。
+		return keys[0]
+	}
+	// CRX3 头可以携带多个 proof 公钥。只有派生扩展 ID 与声明 ID 一致的那个
+	// 公钥才是插件身份，按数组顺序取第一个会把错误的 key 写进 manifest，
+	// 让未打包加载的扩展 ID 与商店 ID 不一致。
+	wantedID := extensionIDFromBytes(declaredID)
+	for _, key := range keys {
+		if extensionIDFromPublicKey(key) == wantedID {
+			return key
+		}
+	}
+	return nil
 }
 
 func crx3PublicKeysFromHeader(header []byte) [][]byte {
