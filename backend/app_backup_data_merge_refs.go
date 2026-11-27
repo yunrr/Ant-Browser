@@ -29,6 +29,7 @@ type backupImportReferenceMappings struct {
 	Proxies            map[string]backupImportIDMapping
 	Profiles           map[string]backupImportIDMapping
 	Extensions         map[string]backupImportIDMapping
+	ExistingExtensions map[string]struct{}
 	ProxyVirtualGroups map[string]backupImportIDMapping
 }
 
@@ -67,6 +68,7 @@ func newBackupImportReferenceMappings() *backupImportReferenceMappings {
 		Proxies:            make(map[string]backupImportIDMapping),
 		Profiles:           make(map[string]backupImportIDMapping),
 		Extensions:         make(map[string]backupImportIDMapping),
+		ExistingExtensions: make(map[string]struct{}),
 		ProxyVirtualGroups: make(map[string]backupImportIDMapping),
 	}
 }
@@ -119,7 +121,7 @@ func backupImportGeneratedID(used map[string]struct{}) string {
 	}
 }
 
-func (a *App) backupBuildImportReferenceMappings(tx *sql.Tx, incomingCfg *config.Config, stats *backupMergeStats) (*backupImportReferenceMappings, error) {
+func (a *App) backupBuildImportReferenceMappings(tx *sql.Tx, incomingCfg *config.Config, stats *backupMergeStats, sourceExtensionRoot string) (*backupImportReferenceMappings, error) {
 	mappings := newBackupImportReferenceMappings()
 	if err := a.backupMapImportGroups(tx, mappings, stats); err != nil {
 		return nil, err
@@ -136,7 +138,7 @@ func (a *App) backupBuildImportReferenceMappings(tx *sql.Tx, incomingCfg *config
 	if err := a.backupMapImportProfiles(tx, incomingCfg, mappings, stats); err != nil {
 		return nil, err
 	}
-	if err := a.backupMapImportExtensions(tx, mappings); err != nil {
+	if err := a.backupMapImportExtensions(tx, mappings, sourceExtensionRoot); err != nil {
 		return nil, err
 	}
 	return mappings, nil
@@ -630,36 +632,32 @@ func (a *App) backupMapImportProfiles(tx *sql.Tx, incomingCfg *config.Config, ma
 	return nil
 }
 
-func (a *App) backupMapImportExtensions(tx *sql.Tx, mappings *backupImportReferenceMappings) error {
-	targetIDs, err := backupQueryImportIDs(tx, "browser_extensions", "extension_id")
+func (a *App) backupMapImportExtensions(tx *sql.Tx, mappings *backupImportReferenceMappings, sourceRoot string) error {
+	targets, err := queryExtensionRestoreRecords(tx, false)
 	if err != nil {
 		return fmt.Errorf("读取目标插件失败: %w", err)
 	}
-	targetIDSet := make(map[string]struct{}, len(targetIDs))
-	for _, targetID := range targetIDs {
-		targetIDSet[backupImportIDKey(targetID)] = struct{}{}
-		backupImportSetMapping(mappings.Extensions, targetID, targetID, false)
+	for key := range targets {
+		mappings.ExistingExtensions[key] = struct{}{}
 	}
 	sourceExists, err := backupSrcTableExists(tx, "browser_extensions")
-	if err != nil {
+	if err != nil || !sourceExists {
 		return err
 	}
-	if !sourceExists {
-		return nil
-	}
-	sourceIDs, err := backupQueryImportIDs(tx, "src.browser_extensions", "extension_id")
+	sources, err := queryExtensionRestoreRecords(tx, true)
 	if err != nil {
 		return fmt.Errorf("读取备份插件失败: %w", err)
 	}
-	for _, sourceID := range sourceIDs {
-		if backupImportIDKey(sourceID) == "" {
+	targetRoot := a.resolveAppPath(backupManagedExtensionsRoot)
+	for key, source := range sources {
+		if target, exists := targets[key]; exists {
+			if err := checkExtensionRestoreIdentity(source, target, sourceRoot, targetRoot); err != nil {
+				return err
+			}
+			backupImportSetMapping(mappings.Extensions, source.ExtensionID, target.ExtensionID, false)
 			continue
 		}
-		imported := true
-		if _, exists := targetIDSet[backupImportIDKey(sourceID)]; exists {
-			imported = false
-		}
-		backupImportSetMapping(mappings.Extensions, sourceID, sourceID, imported)
+		backupImportSetMapping(mappings.Extensions, source.ExtensionID, source.ExtensionID, true)
 	}
 	return nil
 }

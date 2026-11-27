@@ -2,6 +2,7 @@ package backend
 
 import (
 	"archive/zip"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -117,6 +118,92 @@ func TestProfilePackageImportPreservesExistingExtensionArtifacts(t *testing.T) {
 	}
 	if string(packageData) != "local-package" {
 		t.Fatalf("existing extension package was overwritten: %q", packageData)
+	}
+}
+
+func TestProfilePackagePreservesExtensionInstallIdentity(t *testing.T) {
+	for _, missingInstall := range []bool{false, true} {
+		name := "installed-manifest-retained"
+		if missingInstall {
+			name = "no-artifacts"
+		}
+		t.Run(name, func(t *testing.T) {
+			source := newBackupExtensionRepairTestApp(t)
+			source.config = config.DefaultConfig()
+			source.config.Browser.UserDataRoot = filepath.Join(source.appRoot, "user-data")
+			source.browserMgr = newBackupIdentityManager(source)
+			const name = "Profile extension identity fixture"
+			original := backupIdentityManifest(t, name, "1.0", "")
+			legacy, err := source.browserMgr.InstallExtensionDirectory(backupIdentityDirectory(t, original), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			publicKey := []byte("ordinary portable extension key")
+			crxPath := filepath.Join(t.TempDir(), "portable.crx")
+			if err := os.WriteFile(crxPath, backupIdentityCRX(t, publicKey, original, "ordinary"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			first, err := source.browserMgr.InstallExtensionPackageFile(crxPath, nil)
+			if err != nil || first.ExtensionID != legacy.ExtensionID {
+				t.Fatalf("prepare portable extension with legacy management ID: %v", err)
+			}
+			for _, path := range []string{crxPath, first.PackagePath} {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if missingInstall {
+				if err := os.RemoveAll(first.InstallDir); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := source.db.GetConn().Exec("UPDATE browser_extensions SET install_dir = '' WHERE extension_id = ?", first.ExtensionID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			profile := browser.Profile{ProfileId: backupTestProfileID, ProfileName: "Portable fixture", UserDataDir: backupTestProfileID}
+			if err := browser.NewSQLiteProfileDAO(source.db.GetConn()).Upsert(&profile); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := source.browserMgr.ExtensionDAO.SetProfileSettings(profile.ProfileId, []string{first.ExtensionID}, true); err != nil {
+				t.Fatal(err)
+			}
+			zipPath := filepath.Join(t.TempDir(), "portable.zip")
+			if _, err := source.writeProfilePackage(zipPath, []browser.Profile{profile}); err != nil {
+				t.Fatal(err)
+			}
+
+			target := newBackupExtensionRepairTestApp(t)
+			target.config = config.DefaultConfig()
+			target.config.Browser.UserDataRoot = filepath.Join(target.appRoot, "user-data")
+			target.browserMgr = newBackupIdentityManager(target)
+			conn := target.db.GetConn()
+			target.browserMgr.ProfileDAO = browser.NewSQLiteProfileDAO(conn)
+			target.browserMgr.ProxyDAO = browser.NewSQLiteProxyDAO(conn)
+			target.browserMgr.CoreDAO = browser.NewSQLiteCoreDAO(conn)
+			target.browserMgr.GroupDAO = browser.NewSQLiteGroupDAO(conn)
+			imported, err := target.importProfilePackageFromPath(zipPath)
+			if err != nil || imported.ImportedCount != 1 {
+				t.Fatalf("restore portable extension snapshot: %v", err)
+			}
+			restored, err := target.browserMgr.ExtensionDAO.Get(first.ExtensionID)
+			if err != nil || restored.PackagePath != "" || restored.PackageHash != first.PackageHash || restored.ManifestJSON != first.ManifestJSON {
+				t.Fatalf("restore changed portable digest or exposed manifest: %v", err)
+			}
+			key := base64.StdEncoding.EncodeToString(publicKey)
+			upgraded, err := target.browserMgr.InstallExtensionDirectory(backupIdentityDirectory(t, backupIdentityManifest(t, name, "2.0", key)), nil)
+			wantPath := filepath.Join(target.appRoot, "data", "extensions", first.ExtensionID)
+			if err != nil || upgraded.ExtensionID != first.ExtensionID || !backupSamePath(upgraded.InstallDir, wantPath) || upgraded.Version != "2.0" {
+				t.Fatalf("portable upgrade did not reuse the old ID and directory: %v", err)
+			}
+			profiles, err := target.browserMgr.ProfileDAO.List()
+			if err != nil || len(profiles) != 1 {
+				t.Fatalf("read imported instance: %v", err)
+			}
+			settings, err := target.browserMgr.ExtensionDAO.GetProfileSettings(profiles[0].ProfileId)
+			if err != nil || !settings.Configured || len(settings.ExtensionIDs) != 1 || settings.ExtensionIDs[0] != first.ExtensionID {
+				t.Fatalf("portable upgrade changed the profile binding: %v", err)
+			}
+		})
 	}
 }
 

@@ -25,6 +25,19 @@ type Extension struct {
 	DefaultInstall bool   `json:"defaultInstall"`
 	InstalledAt    string `json:"installedAt"`
 	UpdatedAt      string `json:"updatedAt"`
+
+	installEvidence *extensionInstallEvidence
+}
+
+// This is app-owned evidence, captured before installation changes the source
+// manifest. Runtime packaging may update GeneratedHash, never the origin.
+type extensionInstallEvidence struct {
+	FromInstaller    bool   `json:"fromInstaller,omitempty"`
+	Identity         string `json:"identity,omitempty"`
+	OriginalManifest string `json:"originalManifest,omitempty"`
+	OriginalHash     string `json:"originalHash,omitempty"`
+	GeneratedHash    string `json:"generatedHash,omitempty"`
+	UnverifiedCache  bool   `json:"unverifiedCache,omitempty"`
 }
 
 type ExtensionLookupResult struct {

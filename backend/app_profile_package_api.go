@@ -975,11 +975,20 @@ func (a *App) importProfilePackageFromPathWithModeAndPortableSession(zipPath str
 		}
 		a.browserMgr.Mutex.Unlock()
 	}
+	var extensionRestore profilePackageExtensionRestore
 	if contents.DatabaseSnapshot != nil {
-		created, err := a.materializeProfilePackageExtensionArtifacts(contents.Reader.File, contents.DatabaseSnapshot, stagingRoot, &warnings)
-		createdExtensionPaths = append(createdExtensionPaths, created...)
+		sourceRoot := filepath.Join(stagingRoot, "extensions")
+		staged, err := stageProfilePackageExtensionArtifacts(contents.Reader.File, contents.DatabaseSnapshot, sourceRoot, &warnings)
 		if err != nil {
 			return ProfilePackageImportResult{}, err
+		}
+		extensionRestore = profilePackageExtensionRestore{
+			sourceRoot: sourceRoot,
+			materialize: func(extensions []browser.Extension, targets map[string]browser.Extension) error {
+				created, err := a.materializeProfilePackageExtensionArtifacts(extensions, targets, staged, sourceRoot, &warnings)
+				createdExtensionPaths = append(createdExtensionPaths, created...)
+				return err
+			},
 		}
 	}
 	for _, item := range prepared {
@@ -994,7 +1003,7 @@ func (a *App) importProfilePackageFromPathWithModeAndPortableSession(zipPath str
 	}
 	legacyDatabaseRestore := contents.DatabaseSnapshot == nil && a.db != nil && a.db.GetConn() != nil
 	if contents.DatabaseSnapshot != nil {
-		if err := a.restoreProfilePackageDatabase(*contents.DatabaseSnapshot, prepared, &warnings); err != nil {
+		if err := a.restoreProfilePackageDatabase(*contents.DatabaseSnapshot, prepared, &warnings, extensionRestore); err != nil {
 			return ProfilePackageImportResult{}, err
 		}
 	} else if legacyDatabaseRestore {
@@ -1235,71 +1244,136 @@ func (a *App) extractProfileUserDataToDir(files []*zip.File, oldProfileID string
 	return hasUserData, nil
 }
 
-func (a *App) materializeProfilePackageExtensionArtifacts(files []*zip.File, snapshot *ProfilePackageDatabase, stagingRoot string, warnings *[]string) ([]string, error) {
-	if snapshot == nil || len(snapshot.ExtensionArtifacts) == 0 {
-		return nil, nil
-	}
+type stagedProfilePackageExtension struct {
+	installDir  string
+	packagePath string
+}
 
-	extensionIndexes := make(map[string]int, len(snapshot.Extensions))
-	for index, extension := range snapshot.Extensions {
-		extensionIndexes[backupImportIDKey(extension.ExtensionID)] = index
+func stageProfilePackageExtensionArtifacts(files []*zip.File, snapshot *ProfilePackageDatabase, sourceRoot string, warnings *[]string) (map[string]stagedProfilePackageExtension, error) {
+	extensions := make(map[string]browser.Extension, len(snapshot.Extensions))
+	for _, extension := range snapshot.Extensions {
+		extensions[backupImportIDKey(extension.ExtensionID)] = extension
 	}
-	createdPaths := make([]string, 0, len(snapshot.ExtensionArtifacts)*2)
-	managedRoot := a.resolveAppPath("data/extensions")
-
+	staged := make(map[string]stagedProfilePackageExtension, len(snapshot.ExtensionArtifacts))
 	for _, artifact := range snapshot.ExtensionArtifacts {
-		extensionIndex, exists := extensionIndexes[backupImportIDKey(artifact.ExtensionID)]
+		key := backupImportIDKey(artifact.ExtensionID)
+		extension, exists := extensions[key]
 		if !exists {
 			appendProfilePackageWarning(warnings, fmt.Sprintf("插件「%s」的文件索引没有对应插件记录，已跳过", artifact.ExtensionID))
 			continue
 		}
-		extension := &snapshot.Extensions[extensionIndex]
-		runtimeID := browser.NormalizeExtensionID(extension.ExtensionID)
-		if runtimeID == "" {
+		id := browser.NormalizeExtensionID(extension.ExtensionID)
+		if id == "" {
 			appendProfilePackageWarning(warnings, fmt.Sprintf("插件「%s」ID 无效，无法恢复插件文件", extension.ExtensionID))
 			continue
 		}
-
-		artifactRoot := filepath.Join(stagingRoot, "extensions", runtimeID)
-		stagedInstallDir := filepath.Join(artifactRoot, "install")
-		stagedPackagePath := filepath.Join(artifactRoot, "package.crx")
-		hasInstallDir, err := extractProfilePackageDirectory(files, artifact.InstallDirArchivePath, stagedInstallDir)
-		if err != nil {
-			return createdPaths, fmt.Errorf("解压插件目录失败(%s): %w", extension.ExtensionID, err)
+		if _, exists := staged[key]; exists {
+			return nil, fmt.Errorf("插件文件索引重复(%s)", extension.ExtensionID)
 		}
-		hasPackage, err := extractProfilePackageArtifactFile(files, artifact.PackageArchivePath, stagedPackagePath)
+		var entry stagedProfilePackageExtension
+		installDir := filepath.Join(sourceRoot, id)
+		hasInstallDir, err := extractProfilePackageDirectory(files, artifact.InstallDirArchivePath, installDir)
 		if err != nil {
-			return createdPaths, fmt.Errorf("解压插件安装包失败(%s): %w", extension.ExtensionID, err)
+			return nil, fmt.Errorf("解压插件目录失败(%s): %w", extension.ExtensionID, err)
 		}
-
-		targetInstallDir := filepath.Join(managedRoot, runtimeID)
-		targetPackagePath := filepath.Join(managedRoot, "packages", runtimeID+".crx")
 		if hasInstallDir {
-			created, err := materializeProfilePackageDirectory(stagedInstallDir, targetInstallDir)
+			entry.installDir = installDir
+		}
+		packagePath := filepath.Join(sourceRoot, "packages", id+".crx")
+		hasPackage, err := extractProfilePackageArtifactFile(files, artifact.PackageArchivePath, packagePath)
+		if err != nil {
+			return nil, fmt.Errorf("解压插件安装包失败(%s): %w", extension.ExtensionID, err)
+		}
+		if hasPackage {
+			entry.packagePath = packagePath
+		}
+		if !hasInstallDir && !hasPackage {
+			appendProfilePackageWarning(warnings, fmt.Sprintf("插件「%s」在实例包中没有可恢复的文件", extension.Name))
+		}
+		staged[key] = entry
+	}
+	return staged, nil
+}
+
+func (a *App) materializeProfilePackageExtensionArtifacts(extensions []browser.Extension, targets map[string]browser.Extension, staged map[string]stagedProfilePackageExtension, sourceRoot string, warnings *[]string) ([]string, error) {
+	createdPaths := make([]string, 0, len(staged)*2)
+	managedRoot := a.resolveAppPath(backupManagedExtensionsRoot)
+	for i := range extensions {
+		extension := &extensions[i]
+		key := backupImportIDKey(extension.ExtensionID)
+		if _, exists := targets[key]; exists {
+			continue // The transaction has already verified identity; the target owns its artifacts.
+		}
+		id := browser.NormalizeExtensionID(extension.ExtensionID)
+		if id == "" {
+			continue
+		}
+		entry := staged[key]
+		targetInstallDir := filepath.Join(managedRoot, id)
+		targetPackagePath := filepath.Join(managedRoot, "packages", id+".crx")
+		// Source-machine paths are never used to read files during restore.
+		if backupPathHasSuffix(extension.InstallDir, filepath.ToSlash(filepath.Join(backupManagedExtensionsRoot, id))) {
+			extension.InstallDir = ""
+		}
+		hasDigest := browser.ValidExtensionPackageHash(strings.TrimSpace(extension.PackageHash))
+		if hasDigest || backupPathHasSuffix(extension.PackagePath, filepath.ToSlash(filepath.Join(backupManagedExtensionsRoot, "packages", id+".crx"))) {
+			if !hasDigest {
+				var err error
+				extension.ManifestJSON, err = browser.MarkUnverifiedExtensionBackupCache(extension.ManifestJSON)
+				if err != nil {
+					return createdPaths, fmt.Errorf("保留插件包历史来源失败(%s): %w", id, err)
+				}
+			}
+			extension.PackagePath = ""
+		}
+		var installedFromStage bool
+		if entry.installDir != "" {
+			created, err := materializeProfilePackageDirectory(entry.installDir, targetInstallDir)
 			if err != nil {
 				return createdPaths, fmt.Errorf("恢复插件目录失败(%s): %w", extension.ExtensionID, err)
 			}
 			if created {
+				installedFromStage = true
 				createdPaths = append(createdPaths, targetInstallDir)
 			}
 			if _, err := os.Stat(targetInstallDir); err == nil {
 				extension.InstallDir = targetInstallDir
 			}
 		}
-		if hasPackage {
-			created, err := materializeProfilePackageFile(stagedPackagePath, targetPackagePath)
-			if err != nil {
-				return createdPaths, fmt.Errorf("恢复插件安装包失败(%s): %w", extension.ExtensionID, err)
+		if entry.packagePath == "" {
+			if hasDigest {
+				var stagedRoots []string
+				if entry.installDir != "" && !installedFromStage {
+					stagedRoots = append(stagedRoots, sourceRoot)
+				}
+				verified, err := browser.VerifyRetainedExtensionCache(*extension, managedRoot, stagedRoots...)
+				if err != nil {
+					appendProfilePackageWarning(warnings, fmt.Sprintf("未恢复插件包引用(%s): %v", extension.ExtensionID, err))
+				} else if verified {
+					extension.PackagePath = targetPackagePath
+				}
 			}
-			if created {
-				createdPaths = append(createdPaths, targetPackagePath)
-			}
-			if _, err := os.Stat(targetPackagePath); err == nil {
-				extension.PackagePath = targetPackagePath
-			}
+			continue
 		}
-		if !hasInstallDir && !hasPackage {
-			appendProfilePackageWarning(warnings, fmt.Sprintf("插件「%s」在实例包中没有可恢复的文件", extension.Name))
+		created, err := materializeProfilePackageFile(entry.packagePath, targetPackagePath)
+		if err != nil {
+			return createdPaths, fmt.Errorf("恢复插件安装包失败(%s): %w", extension.ExtensionID, err)
+		}
+		if created {
+			createdPaths = append(createdPaths, targetPackagePath)
+		}
+		if _, err := os.Stat(targetPackagePath); err == nil {
+			if hasDigest {
+				got, err := backupSHA256File(targetPackagePath)
+				if err != nil {
+					return createdPaths, fmt.Errorf("计算插件包哈希失败(%s): %w", extension.ExtensionID, err)
+				}
+				if !strings.EqualFold(got, strings.TrimSpace(extension.PackageHash)) {
+					appendProfilePackageWarning(warnings, fmt.Sprintf("插件包校验信息不一致(%s)", extension.ExtensionID))
+					continue
+				}
+			}
+			extension.PackagePath = targetPackagePath
 		}
 	}
 	return createdPaths, nil
@@ -1367,7 +1441,7 @@ func isSafeProfilePackageRelativePath(value string) bool {
 
 func materializeProfilePackageDirectory(stagingDir string, targetDir string) (bool, error) {
 	if _, err := os.Stat(targetDir); err == nil {
-		_ = os.RemoveAll(stagingDir)
+		// Leave source evidence for cache verification and the import's deferred cleanup.
 		return false, nil
 	} else if !os.IsNotExist(err) {
 		return false, err

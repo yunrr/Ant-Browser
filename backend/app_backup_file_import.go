@@ -21,10 +21,16 @@ func (a *App) backupImportFileTreesWithRollback(payloadRoot string, incomingCfg 
 		}
 	}
 
+	var importMappings *backupImportReferenceMappings
+	if len(referenceMappings) > 0 {
+		importMappings = referenceMappings[0]
+	}
 	appDataSrc := filepath.Join(payloadRoot, "app", "data")
 	appDataDst := a.resolveAppPath("data")
 	if backupPathExists(appDataSrc) {
-		if err := backupSyncDir(appDataSrc, appDataDst, stats, backupShouldSkipAppDBFile, rollback); err != nil {
+		if err := backupSyncDir(appDataSrc, appDataDst, stats, func(rel string) bool {
+			return backupShouldSkipAppDBFile(rel) || backupSkipExistingExtensionArtifact(importMappings, appDataDst, filepath.Join(appDataDst, rel))
+		}, rollback); err != nil {
 			report("app_data_root", "应用数据目录（含数据库、快照及默认浏览器数据）", err)
 		}
 	}
@@ -32,7 +38,9 @@ func (a *App) backupImportFileTreesWithRollback(payloadRoot string, incomingCfg 
 	userDataSrc := filepath.Join(payloadRoot, "browser", "user-data")
 	userDataDst := a.backupResolveUserDataRoot(a.config)
 	if backupPathExists(userDataSrc) {
-		if err := backupSyncDir(userDataSrc, userDataDst, stats, nil, rollback); err != nil {
+		if err := backupSyncDir(userDataSrc, userDataDst, stats, func(rel string) bool {
+			return backupSkipExistingExtensionArtifact(importMappings, appDataDst, filepath.Join(userDataDst, rel))
+		}, rollback); err != nil {
 			report("browser_user_data_root", "浏览器用户数据根目录", err)
 		}
 	}
@@ -71,10 +79,6 @@ func (a *App) backupImportFileTreesWithRollback(payloadRoot string, incomingCfg 
 
 		targetExternal := a.backupCollectExternalCoreTargets(incomingCfg)
 		sourceCoreIDs := backupExternalCoreIDsByFolder(manifest)
-		var importMappings *backupImportReferenceMappings
-		if len(referenceMappings) > 0 {
-			importMappings = referenceMappings[0]
-		}
 		usedTargets := make(map[string]struct{}, len(targetExternal))
 		fallbackIndex := 0
 		for _, folder := range sourceExternal {
@@ -98,6 +102,28 @@ func (a *App) backupImportFileTreesWithRollback(payloadRoot string, incomingCfg 
 			}
 		}
 	}
+}
+
+// Existing target records own their managed directories, cached packages and pack keys.
+func backupSkipExistingExtensionArtifact(mappings *backupImportReferenceMappings, dataRoot, targetPath string) bool {
+	if mappings == nil || len(mappings.ExistingExtensions) == 0 {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Join(dataRoot, "extensions"), targetPath)
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	id := parts[0]
+	if strings.EqualFold(id, "packages") && len(parts) == 2 {
+		ext := strings.ToLower(filepath.Ext(parts[1]))
+		if ext != ".crx" && ext != ".pem" {
+			return false
+		}
+		id = parts[1][:len(parts[1])-len(ext)]
+	}
+	_, exists := mappings.ExistingExtensions[backupImportIDKey(id)]
+	return exists && id != "." && id != ".."
 }
 
 func (a *App) backupCollectExternalCorePaths(cfg *config.Config) []string {

@@ -281,6 +281,7 @@ func (m *Manager) PrepareProfileExtensions(profile *Profile, chromeBinaryPath st
 
 	return warnings
 }
+
 // EnsureExtensionUnusedByRunningProfiles 只查配置，不扫文件系统：
 // 删除插件前确认没有运行中的实例正在使用它。
 func (m *Manager) EnsureExtensionUnusedByRunningProfiles(extensionID string) error {
@@ -887,6 +888,12 @@ func (m *Manager) packExtensionDirectory(extension Extension, chromeBinaryPath s
 	extension.InstallMode = ExtensionInstallModePersistent
 	extension.PackagePath = storedPath
 	extension.PackageHash = packageHash
+	if extension.installEvidence != nil && extension.installEvidence.FromInstaller {
+		evidence := *extension.installEvidence
+		evidence.GeneratedHash = packageHash
+		evidence.UnverifiedCache = false
+		extension.installEvidence = &evidence
+	}
 	if m.ExtensionDAO != nil {
 		if err := m.ExtensionDAO.Upsert(extension); err != nil {
 			return "", "", err

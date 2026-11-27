@@ -2,9 +2,16 @@ package backend
 
 import (
 	"ant-chrome/backend/internal/backup"
+	"ant-chrome/backend/internal/browser"
+	"ant-chrome/backend/internal/config"
 	"ant-chrome/backend/internal/database"
+	"archive/zip"
+	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -245,6 +252,226 @@ func TestBackupRepairExtensionPathsReportsCorruptCRX(t *testing.T) {
 	if gotPackagePath != "" || gotPackageHash != "" {
 		t.Fatalf("corrupt package metadata = (%q, %q), want empty values", gotPackagePath, gotPackageHash)
 	}
+}
+
+func TestBackupRepairExtensionPathsPreservesInstallIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		fresh           string
+		hasDigest       bool
+		legacyHash      bool
+		cache           string
+		missingManifest bool
+		wantUpgrade     bool
+	}{
+		{name: "historical-copies-already-cleared"},
+		{name: "historical-copies-cache-missing", hasDigest: true},
+		{name: "historical-copies-digest-mismatch", hasDigest: true, cache: "mismatch"},
+		{name: "historical-copies-digest-matches", hasDigest: true, cache: "original", wantUpgrade: true},
+		{name: "historical-rebuilt-digest-is-not-evidence", hasDigest: true, legacyHash: true, cache: "original"},
+		{name: "fresh-ordinary-keyed-directory", fresh: "directory", wantUpgrade: true},
+		{name: "fresh-ordinary-keyed-zip", fresh: "zip", wantUpgrade: true},
+		{name: "fresh-crx-cache-missing", fresh: "crx", wantUpgrade: true},
+		{name: "fresh-crx-cache-and-manifest-missing", fresh: "crx", missingManifest: true, wantUpgrade: true},
+		{name: "fresh-crx-only-manifest-missing", fresh: "crx", cache: "original", missingManifest: true, wantUpgrade: true},
+		{name: "fresh-crx-contradictory-cache", fresh: "crx", cache: "mismatch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := newBackupExtensionRepairTestApp(t)
+			sourceMgr := newBackupIdentityManager(source)
+			const name = "Backup identity fixture"
+			publicKey := []byte("local fixture public key")
+			key := base64.StdEncoding.EncodeToString(publicKey)
+			original := backupIdentityManifest(t, name, "1.0", key)
+			if tc.fresh == "crx" {
+				original = backupIdentityManifest(t, name, "1.0", "")
+			}
+			var packageData []byte
+			if tc.hasDigest || tc.fresh == "crx" {
+				packageData = backupIdentityCRX(t, publicKey, original, "original")
+			}
+			var row browser.Extension
+			if tc.fresh != "" {
+				legacy, err := sourceMgr.InstallExtensionDirectory(backupIdentityDirectory(t, backupIdentityManifest(t, name, "1.0", "")), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				switch tc.fresh {
+				case "directory":
+					row, err = sourceMgr.InstallExtensionDirectory(backupIdentityDirectory(t, original), nil)
+				case "zip", "crx":
+					input := packageData
+					if tc.fresh == "zip" {
+						input = backupIdentityZIP(t, original, "ordinary")
+					}
+					path := filepath.Join(t.TempDir(), "extension."+tc.fresh)
+					if err := os.WriteFile(path, input, 0o644); err != nil {
+						t.Fatal(err)
+					}
+					row, err = sourceMgr.InstallExtensionPackageFile(path, nil)
+				}
+				if err != nil || row.ExtensionID != legacy.ExtensionID {
+					t.Fatalf("prepare a genuine original with legacy management ID: %v", err)
+				}
+			} else {
+				row = browser.Extension{
+					ExtensionID: backupTestExtensionID, Name: name, Version: "1.0", ManifestJSON: string(original),
+					InstallDir: filepath.Join(source.appRoot, "data", "extensions", backupTestExtensionID),
+				}
+				if tc.hasDigest {
+					row.PackagePath = filepath.Join(source.appRoot, "data", "extensions", "packages", row.ExtensionID+".crx")
+					row.PackageHash = sha256Hex(packageData)
+					if tc.legacyHash {
+						row.PackageHash = "legacy-hash"
+					}
+				}
+				if err := sourceMgr.ExtensionDAO.Upsert(row); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := sourceMgr.ExtensionDAO.SetEnabled(row.ExtensionID, false); err != nil {
+				t.Fatal(err)
+			}
+			if err := sourceMgr.ExtensionDAO.SetDefaultInstall(row.ExtensionID, true); err != nil {
+				t.Fatal(err)
+			}
+			profile := &browser.Profile{ProfileId: backupTestProfileID, ProfileName: "Backup identity fixture", UserDataDir: backupTestProfileID}
+			if err := browser.NewSQLiteProfileDAO(source.db.GetConn()).Upsert(profile); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := sourceMgr.ExtensionDAO.SetProfileSettings(backupTestProfileID, []string{row.ExtensionID}, true); err != nil {
+				t.Fatal(err)
+			}
+
+			target := newBackupExtensionRepairTestApp(t)
+			targetMgr := newBackupIdentityManager(target)
+			if tc.cache == "mismatch" {
+				// Still the same public identity and original manifest, only
+				// the ordinary archive contents differ from the saved digest.
+				packageData = backupIdentityCRX(t, publicKey, original, "different archive contents")
+			}
+			payloadRoot := writeBackupExtensionPayload(t, t.TempDir(), row.ExtensionID, packageData, tc.cache != "", "")
+			payloadManifest := filepath.Join(payloadRoot, "app", "data", "extensions", row.ExtensionID, "manifest.json")
+			var err error
+			if tc.missingManifest {
+				err = os.Remove(payloadManifest)
+			} else {
+				err = os.WriteFile(payloadManifest, []byte(row.ManifestJSON), 0o644)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := target.backupMergeDatabaseFromSource(filepath.Join(source.appRoot, "data", "app.db"), nil, &backupMergeStats{}); err != nil {
+				t.Fatal(err)
+			}
+			target.backupImportFileTrees(payloadRoot, nil, backup.Manifest{}, &backupMergeStats{}, nil)
+			issues, err := target.backupRepairExtensionPathsAfterImport()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.cache == "mismatch" && (len(issues) != 1 || !strings.Contains(issues[0].Error(), "校验信息不一致")) {
+				t.Error("restore did not report the cache digest mismatch")
+			}
+			restored, err := targetMgr.ExtensionDAO.Get(row.ExtensionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantDigest := row.PackageHash
+			if tc.legacyHash {
+				wantDigest = sha256Hex(packageData)
+			}
+			if restored.PackageHash != wantDigest || restored.ManifestJSON != row.ManifestJSON {
+				t.Error("restore discarded the saved digest or changed the exposed manifest")
+			}
+			if tc.cache != "original" && restored.PackagePath != "" {
+				t.Error("restore retained an unusable cache path")
+			}
+			upgrade, err := targetMgr.InstallExtensionDirectory(backupIdentityDirectory(t, backupIdentityManifest(t, name, "2.0", key)), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (upgrade.ExtensionID == row.ExtensionID) != tc.wantUpgrade {
+				t.Error("install selected the wrong management ID for the restored evidence")
+			}
+			stored, err := targetMgr.ExtensionDAO.Get(row.ExtensionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantVersion := "1.0"
+			if tc.wantUpgrade {
+				wantVersion = "2.0"
+			}
+			portableDir := filepath.Join(target.appRoot, "data", "extensions", row.ExtensionID)
+			if stored.Version != wantVersion || !backupSamePath(stored.InstallDir, portableDir) || stored.Enabled || !stored.DefaultInstall {
+				t.Error("install changed the wrong restored record, path, or settings")
+			}
+			settings, err := targetMgr.ExtensionDAO.GetProfileSettings(backupTestProfileID)
+			if err != nil || !settings.Configured || len(settings.ExtensionIDs) != 1 || settings.ExtensionIDs[0] != row.ExtensionID {
+				t.Errorf("install did not preserve the restored profile binding: %v", err)
+			}
+		})
+	}
+}
+
+func newBackupIdentityManager(app *App) *browser.Manager {
+	m := browser.NewManager(config.DefaultConfig(), app.appRoot)
+	m.ExtensionDAO = browser.NewSQLiteExtensionDAO(app.db.GetConn())
+	return m
+}
+
+func backupIdentityManifest(t *testing.T, name, version, key string) []byte {
+	t.Helper()
+	fields := map[string]string{"name": name, "version": version}
+	if key != "" {
+		fields["key"] = key
+	}
+	data, err := json.MarshalIndent(fields, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func backupIdentityCRX(t *testing.T, key, manifest []byte, contents string) []byte {
+	t.Helper()
+	// The header key is either absent from the manifest or matches it;
+	// this inert fixture is used only to compare restored cache digests.
+	header := make([]byte, 16, 16+len(key))
+	copy(header, "Cr24")
+	binary.LittleEndian.PutUint32(header[4:], 2)
+	binary.LittleEndian.PutUint32(header[8:], uint32(len(key)))
+	return append(append(header, key...), backupIdentityZIP(t, manifest, contents)...)
+}
+
+func backupIdentityZIP(t *testing.T, manifest []byte, contents string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	archive := zip.NewWriter(&buf)
+	for _, entry := range []struct {
+		name string
+		data []byte
+	}{{"manifest.json", manifest}, {"fixture.txt", []byte(contents)}} {
+		w, err := archive.Create(entry.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(entry.data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func backupIdentityDirectory(t *testing.T, manifest []byte) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func newBackupExtensionRepairTestApp(t *testing.T) *App {

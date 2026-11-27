@@ -52,7 +52,11 @@ func (a *App) backupImportFromPathLocked(zipPath string) (map[string]interface{}
 	var importMappings *backupImportReferenceMappings
 	if dbSrc := backupFindDatabaseFile(payloadRoot); dbSrc != "" {
 		a.backupEmitImportProgress("importing", 76, "正在合并数据库数据...")
-		importMappings, err = a.backupMergeDatabaseFromSource(dbSrc, incomingCfg, stats)
+		sourceExtensionRoot := filepath.Join(payloadRoot, "app", backupManagedExtensionsRoot)
+		importMappings, err = a.backupMergeDatabaseFromSource(dbSrc, incomingCfg, stats, sourceExtensionRoot)
+		if errors.Is(err, errExtensionRestoreIdentityConflict) {
+			return nil, err
+		}
 		if err != nil {
 			issueTracker.RecordIssue("database_sqlite_main", "SQLite 主数据库", err)
 		}
@@ -86,7 +90,7 @@ func (a *App) backupImportFromPathLocked(zipPath string) (map[string]interface{}
 	a.backupImportFileTreesWithRollback(payloadRoot, incomingCfg, manifest, stats, issueTracker.RecordIssue, rollback, importMappings)
 
 	a.backupEmitImportProgress("importing", 92, "正在修复插件迁移路径...")
-	repairIssues, err := a.backupRepairExtensionPathsAfterImport()
+	repairIssues, err := a.backupRepairExtensionPathsAfterImport(importMappings)
 	if err != nil {
 		issueTracker.RecordIssue("browser_extension_paths", "插件路径迁移", err)
 	}

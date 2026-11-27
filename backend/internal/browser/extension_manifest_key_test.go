@@ -90,7 +90,7 @@ func TestEnsureExtensionManifestKeyWithoutPublicKeyIsNoop(t *testing.T) {
 	}
 }
 
-// key 不能参与身份比对：安装时补写的 key 会让同一插件在重装后算出不同身份。
+// 仅测试历史无身份记录的清单形状与回退哈希，不代表最终安装身份。
 func TestExtensionIdentityManifestIgnoresKey(t *testing.T) {
 	withoutKey := []byte(`{"manifest_version":3,"name":"1Password","version":"8.12.46.29"}`)
 	withKey := []byte(`{"manifest_version":3,"name":"1Password","version":"8.12.46.29","key":"c29tZS1rZXk="}`)

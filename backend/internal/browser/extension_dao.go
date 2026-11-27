@@ -2,6 +2,7 @@ package browser
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -66,19 +67,33 @@ func (d *SQLiteExtensionDAO) ListByIDs(extensionIDs []string) ([]Extension, erro
 }
 
 func (d *SQLiteExtensionDAO) Get(extensionID string) (Extension, error) {
+	return d.get(extensionID, false)
+}
+
+// GetForBackup preserves the internal manifest record in the existing backup
+// manifestJson slot. Regular DAO reads expose only the browser manifest.
+func (d *SQLiteExtensionDAO) GetForBackup(extensionID string) (Extension, error) {
+	return d.get(extensionID, true)
+}
+
+func (d *SQLiteExtensionDAO) get(extensionID string, forBackup bool) (Extension, error) {
 	row := d.db.QueryRow(`
 		SELECT extension_id, name, version, description, icon_data_url, manifest_json, source_url, install_dir, install_mode, package_path, package_hash, enabled, default_install, installed_at, updated_at
 		FROM browser_extensions WHERE extension_id = ?`, strings.TrimSpace(extensionID))
-	return scanExtension(row)
+	return scanExtensionRecord(row, forBackup)
 }
 
 func (d *SQLiteExtensionDAO) Upsert(extension Extension) error {
+	manifest, err := encodeExtensionManifestRecord(extension.ManifestJSON, extension.installEvidence)
+	if err != nil {
+		return err
+	}
 	now := time.Now().Format(time.RFC3339)
 	if strings.TrimSpace(extension.InstalledAt) == "" {
 		extension.InstalledAt = now
 	}
 	extension.UpdatedAt = now
-	_, err := d.db.Exec(`
+	_, err = d.db.Exec(`
 		INSERT INTO browser_extensions (extension_id, name, version, description, icon_data_url, manifest_json, source_url, install_dir, install_mode, package_path, package_hash, enabled, default_install, installed_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(extension_id) DO UPDATE SET
@@ -98,7 +113,7 @@ func (d *SQLiteExtensionDAO) Upsert(extension Extension) error {
 		extension.Version,
 		extension.Description,
 		extension.IconDataURL,
-		extension.ManifestJSON,
+		manifest,
 		extension.SourceURL,
 		extension.InstallDir,
 		normalizeExtensionInstallMode(extension.InstallMode),
@@ -240,7 +255,6 @@ func (d *SQLiteExtensionDAO) GetProfileSettings(profileID string) (ProfileExtens
 	}
 	return settings, rows.Err()
 }
-
 
 func (d *SQLiteExtensionDAO) SetProfileSettings(profileID string, extensionIDs []string, configured bool) (ProfileExtensionSettings, error) {
 	profileID = strings.TrimSpace(profileID)
@@ -406,6 +420,10 @@ type extensionScanner interface {
 }
 
 func scanExtension(scanner extensionScanner) (Extension, error) {
+	return scanExtensionRecord(scanner, false)
+}
+
+func scanExtensionRecord(scanner extensionScanner, forBackup bool) (Extension, error) {
 	var extension Extension
 	var enabled int
 	var defaultInstall int
@@ -431,7 +449,50 @@ func scanExtension(scanner extensionScanner) (Extension, error) {
 	extension.Enabled = enabled != 0
 	extension.DefaultInstall = defaultInstall != 0
 	extension.InstallMode = normalizeExtensionInstallMode(extension.InstallMode)
+	if !forBackup {
+		extension.ManifestJSON, extension.installEvidence = decodeExtensionManifestRecord(extension.ManifestJSON)
+	}
 	return extension, nil
+}
+
+const extensionManifestRecordFormat = "ant-extension-install-evidence-v1"
+
+type extensionManifestRecord struct {
+	Format   string                   `json:"format"`
+	Manifest string                   `json:"manifest"`
+	Evidence extensionInstallEvidence `json:"evidence"`
+}
+
+func encodeExtensionManifestRecord(manifest string, evidence *extensionInstallEvidence) (string, error) {
+	if evidence == nil {
+		return manifest, nil
+	}
+	// A top-level array cannot be a manifest from any old or current install
+	// entry point. No field supplied by an extension is read as app metadata.
+	data, err := json.Marshal([1]extensionManifestRecord{{extensionManifestRecordFormat, manifest, *evidence}})
+	return string(data), err
+}
+
+func decodeExtensionManifestRecord(data string) (string, *extensionInstallEvidence) {
+	if !strings.HasPrefix(data, "[") {
+		return data, nil
+	}
+	var records []extensionManifestRecord
+	if json.Unmarshal([]byte(data), &records) != nil || len(records) != 1 || records[0].Format != extensionManifestRecordFormat {
+		return data, nil
+	}
+	return records[0].Manifest, &records[0].Evidence
+}
+
+// MarkUnverifiedExtensionBackupCache keeps a legacy cache reference from
+// becoming identity evidence when backup repair clears or reconstructs it.
+func MarkUnverifiedExtensionBackupCache(data string) (string, error) {
+	manifest, evidence := decodeExtensionManifestRecord(data)
+	if evidence == nil {
+		evidence = &extensionInstallEvidence{}
+	}
+	evidence.UnverifiedCache = true
+	return encodeExtensionManifestRecord(manifest, evidence)
 }
 
 func scanProfileExtensionRuntime(scanner extensionScanner) (ProfileExtensionRuntime, error) {

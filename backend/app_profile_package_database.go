@@ -248,7 +248,7 @@ func (a *App) collectProfilePackageDatabase(profiles []browser.Profile) (Profile
 	sort.Strings(extensionKeys)
 	extensionDAO := browser.NewSQLiteExtensionDAO(conn)
 	for _, key := range extensionKeys {
-		extension, err := extensionDAO.Get(key)
+		extension, err := extensionDAO.GetForBackup(key)
 		if err == nil {
 			snapshot.Extensions = append(snapshot.Extensions, extension)
 			continue
@@ -341,7 +341,10 @@ func collectProfilePackageExtensionArtifacts(a *App, extensions []browser.Extens
 
 func resolveProfilePackagePath(a *App, value string) string {
 	value = strings.TrimSpace(value)
-	if value == "" || filepath.IsAbs(value) {
+	if value == "" {
+		return ""
+	}
+	if filepath.IsAbs(value) {
 		return filepath.Clean(value)
 	}
 	if a != nil && a.browserMgr != nil {
@@ -633,7 +636,12 @@ func queryProfilePackageExtensionRuntime(conn *sql.DB, profileID string) ([]brow
 	return result, rows.Err()
 }
 
-func (a *App) restoreProfilePackageDatabase(snapshot ProfilePackageDatabase, prepared []preparedProfilePackageImport, warnings *[]string) error {
+type profilePackageExtensionRestore struct {
+	sourceRoot  string
+	materialize func([]browser.Extension, map[string]browser.Extension) error
+}
+
+func (a *App) restoreProfilePackageDatabase(snapshot ProfilePackageDatabase, prepared []preparedProfilePackageImport, warnings *[]string, artifacts ...profilePackageExtensionRestore) error {
 	if snapshot.Format != profilePackageDatabaseFormat || snapshot.Version != profilePackageDatabaseVersion {
 		return fmt.Errorf("不支持的实例数据库快照格式")
 	}
@@ -686,7 +694,11 @@ func (a *App) restoreProfilePackageDatabase(snapshot ProfilePackageDatabase, pre
 	if err != nil {
 		return err
 	}
-	extensionMappings, err := restoreProfilePackageExtensions(tx, snapshot.Extensions, warnings)
+	var extensionRestore profilePackageExtensionRestore
+	if len(artifacts) > 0 {
+		extensionRestore = artifacts[0]
+	}
+	extensionMappings, err := a.restoreProfilePackageExtensions(tx, snapshot.Extensions, extensionRestore, warnings)
 	if err != nil {
 		return err
 	}
@@ -1334,31 +1346,38 @@ func profilePackageUniqueProxyVirtualGroupName(groupName string, used map[string
 	}
 }
 
-func restoreProfilePackageExtensions(tx *sql.Tx, source []browser.Extension, warnings *[]string) (map[string]string, error) {
-	targetIDs := make(map[string]struct{})
-	rows, err := tx.Query(`SELECT extension_id FROM browser_extensions`)
+func (a *App) restoreProfilePackageExtensions(tx *sql.Tx, source []browser.Extension, artifacts profilePackageExtensionRestore, warnings *[]string) (map[string]string, error) {
+	targets, err := queryExtensionRestoreRecords(tx, false)
 	if err != nil {
 		return nil, fmt.Errorf("读取现有插件失败: %w", err)
 	}
-	for rows.Next() {
-		var extensionID string
-		if err := rows.Scan(&extensionID); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		targetIDs[backupImportIDKey(extensionID)] = struct{}{}
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
 	mappings := make(map[string]string, len(source))
+	targetRoot := a.resolveAppPath(backupManagedExtensionsRoot)
 	for _, extension := range source {
 		key := backupImportIDKey(extension.ExtensionID)
 		if key == "" {
 			continue
 		}
-		if _, exists := targetIDs[key]; exists {
+		if _, seen := mappings[key]; seen {
+			return nil, fmt.Errorf("%w (%s)：实例包中存在重复管理 ID", errExtensionRestoreIdentityConflict, extension.ExtensionID)
+		}
+		if target, exists := targets[key]; exists {
+			if err := checkExtensionRestoreIdentity(extension, target, artifacts.sourceRoot, targetRoot); err != nil {
+				return nil, err
+			}
+			mappings[key] = target.ExtensionID
+		} else {
 			mappings[key] = extension.ExtensionID
+		}
+	}
+	if artifacts.materialize != nil {
+		if err := artifacts.materialize(source, targets); err != nil {
+			return nil, err
+		}
+	}
+	for _, extension := range source {
+		key := backupImportIDKey(extension.ExtensionID)
+		if _, exists := targets[key]; key == "" || exists {
 			continue
 		}
 		installedAt := extension.InstalledAt
@@ -1384,8 +1403,6 @@ func restoreProfilePackageExtensions(tx *sql.Tx, source []browser.Extension, war
 		); err != nil {
 			return nil, fmt.Errorf("恢复插件失败(%s): %w", extension.Name, err)
 		}
-		targetIDs[key] = struct{}{}
-		mappings[key] = extension.ExtensionID
 		if filepath.IsAbs(strings.TrimSpace(extension.InstallDir)) || filepath.IsAbs(strings.TrimSpace(extension.PackagePath)) {
 			appendProfilePackageWarning(warnings, fmt.Sprintf("插件「%s」的外部文件路径未随实例包复制", extension.Name))
 		}

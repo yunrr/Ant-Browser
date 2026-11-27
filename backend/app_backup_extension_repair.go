@@ -18,10 +18,11 @@ const (
 )
 
 type backupExtensionPathRecord struct {
-	extensionID string
-	installDir  string
-	packagePath string
-	packageHash string
+	extensionID  string
+	installDir   string
+	packagePath  string
+	packageHash  string
+	manifestJSON string
 }
 
 type backupProfileExtensionRuntimePathRecord struct {
@@ -30,7 +31,7 @@ type backupProfileExtensionRuntimePathRecord struct {
 	backupPath  string
 }
 
-func (a *App) backupRepairExtensionPathsAfterImport() ([]error, error) {
+func (a *App) backupRepairExtensionPathsAfterImport(referenceMappings ...*backupImportReferenceMappings) ([]error, error) {
 	if a == nil || a.db == nil || a.db.GetConn() == nil {
 		return nil, fmt.Errorf("数据库未初始化，无法修复插件迁移路径")
 	}
@@ -47,6 +48,11 @@ func (a *App) backupRepairExtensionPathsAfterImport() ([]error, error) {
 		return issues, err
 	}
 	for _, extension := range extensions {
+		if len(referenceMappings) > 0 && referenceMappings[0] != nil {
+			if _, exists := referenceMappings[0].ExistingExtensions[backupImportIDKey(extension.extensionID)]; exists {
+				continue
+			}
+		}
 		if err := a.backupRepairExtensionPathRecord(tx, extension, &issues); err != nil {
 			return issues, err
 		}
@@ -70,7 +76,7 @@ func (a *App) backupRepairExtensionPathsAfterImport() ([]error, error) {
 
 func backupLoadExtensionPathRecords(tx *sql.Tx) ([]backupExtensionPathRecord, error) {
 	rows, err := tx.Query(`
-		SELECT extension_id, install_dir, package_path, package_hash
+		SELECT extension_id, install_dir, package_path, package_hash, manifest_json
 		FROM browser_extensions ORDER BY extension_id`)
 	if err != nil {
 		return nil, fmt.Errorf("读取插件路径记录失败: %w", err)
@@ -80,7 +86,7 @@ func backupLoadExtensionPathRecords(tx *sql.Tx) ([]backupExtensionPathRecord, er
 	items := make([]backupExtensionPathRecord, 0)
 	for rows.Next() {
 		var item backupExtensionPathRecord
-		if err := rows.Scan(&item.extensionID, &item.installDir, &item.packagePath, &item.packageHash); err != nil {
+		if err := rows.Scan(&item.extensionID, &item.installDir, &item.packagePath, &item.packageHash, &item.manifestJSON); err != nil {
 			return nil, fmt.Errorf("读取插件路径记录失败: %w", err)
 		}
 		items = append(items, item)
@@ -131,6 +137,7 @@ func (a *App) backupRepairExtensionPathRecord(tx *sql.Tx, record backupExtension
 	newInstallDir := strings.TrimSpace(record.installDir)
 	newPackagePath := strings.TrimSpace(record.packagePath)
 	newPackageHash := strings.TrimSpace(record.packageHash)
+	newManifestJSON := record.manifestJSON
 	changed := false
 
 	if backupExtensionManifestExists(installDir) {
@@ -148,31 +155,22 @@ func (a *App) backupRepairExtensionPathRecord(tx *sql.Tx, record backupExtension
 		}
 	}
 
-	if newPackagePath != "" {
-		if backupExtensionRegularFileExists(packagePath) {
-			if !backupValidCRXFile(packagePath) {
-				if newPackagePath != "" || newPackageHash != "" {
-					newPackagePath = ""
-					newPackageHash = ""
-					changed = true
-				}
-				*issues = append(*issues, fmt.Errorf("插件包不是合法 CRX(%s): %s", extensionID, packagePath))
-			} else {
-				packageHash, err := backupSHA256File(packagePath)
-				if err != nil {
-					return fmt.Errorf("计算插件包哈希失败(%s): %w", extensionID, err)
-				}
-				if !backupSamePath(newPackagePath, packagePath) || newPackageHash != packageHash {
-					newPackagePath = packagePath
-					newPackageHash = packageHash
-					changed = true
-				}
-			}
-		} else if backupPathHasSuffix(newPackagePath, filepath.ToSlash(filepath.Join(backupManagedExtensionsRoot, "packages", extensionID+".crx"))) {
-			newPackagePath = ""
-			newPackageHash = ""
-			changed = true
+	if newPackagePath != "" || newPackageHash != "" {
+		var packageExists bool
+		var err error
+		newPackagePath, newPackageHash, packageExists, err = backupRelocateExtensionCache(extensionID, newPackagePath, newPackageHash, packagePath, issues)
+		if err != nil {
+			return err
 		}
+		// A legacy hash can be rebuilt for cache bookkeeping, but that does
+		// not make the restored bytes independent installation evidence.
+		if !browser.ValidExtensionPackageHash(strings.TrimSpace(record.packageHash)) && (packageExists || newPackagePath == "") {
+			newManifestJSON, err = browser.MarkUnverifiedExtensionBackupCache(record.manifestJSON)
+			if err != nil {
+				return fmt.Errorf("保留插件包历史来源失败(%s): %w", extensionID, err)
+			}
+		}
+		changed = changed || newPackagePath != record.packagePath || newPackageHash != record.packageHash || newManifestJSON != record.manifestJSON
 	}
 
 	if !changed {
@@ -180,17 +178,52 @@ func (a *App) backupRepairExtensionPathRecord(tx *sql.Tx, record backupExtension
 	}
 	if _, err := tx.Exec(`
 		UPDATE browser_extensions
-		SET install_dir = ?, package_path = ?, package_hash = ?, updated_at = ?
+		SET install_dir = ?, package_path = ?, package_hash = ?, manifest_json = ?, updated_at = ?
 		WHERE extension_id = ?`,
 		newInstallDir,
 		newPackagePath,
 		newPackageHash,
+		newManifestJSON,
 		time.Now().Format(time.RFC3339),
 		record.extensionID,
 	); err != nil {
 		return fmt.Errorf("更新插件迁移路径失败(%s): %w", extensionID, err)
 	}
 	return nil
+}
+
+// backupRelocateExtensionCache separates the saved digest from the disposable
+// path. Never associate a known digest with bytes that failed its check.
+func backupRelocateExtensionCache(extensionID, oldPath, oldHash, targetPath string, issues *[]error) (string, string, bool, error) {
+	hasDigest := browser.ValidExtensionPackageHash(oldHash)
+	if !backupExtensionRegularFileExists(targetPath) {
+		if backupPathHasSuffix(oldPath, filepath.ToSlash(filepath.Join(backupManagedExtensionsRoot, "packages", extensionID+".crx"))) {
+			oldPath = ""
+			if !hasDigest {
+				oldHash = ""
+			}
+		}
+		return oldPath, oldHash, false, nil
+	}
+	if !backupValidCRXFile(targetPath) {
+		*issues = append(*issues, fmt.Errorf("插件包不是合法 CRX(%s): %s", extensionID, targetPath))
+		if !hasDigest {
+			oldHash = ""
+		}
+		return "", oldHash, true, nil
+	}
+	digest, err := backupSHA256File(targetPath)
+	if err != nil {
+		return "", "", true, fmt.Errorf("计算插件包哈希失败(%s): %w", extensionID, err)
+	}
+	if hasDigest {
+		if !strings.EqualFold(oldHash, digest) {
+			*issues = append(*issues, fmt.Errorf("插件包校验信息不一致(%s): %s", extensionID, targetPath))
+			return "", oldHash, true, nil
+		}
+		return targetPath, oldHash, true, nil
+	}
+	return targetPath, digest, true, nil
 }
 
 func (a *App) backupRepairProfileExtensionRuntimePath(tx *sql.Tx, record backupProfileExtensionRuntimePathRecord) error {

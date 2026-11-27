@@ -165,7 +165,7 @@ func backupFindDatabaseFile(payloadRoot string) string {
 	return ""
 }
 
-func (a *App) backupMergeDatabaseFromSource(srcDBPath string, incomingCfg *config.Config, stats *backupMergeStats) (*backupImportReferenceMappings, error) {
+func (a *App) backupMergeDatabaseFromSource(srcDBPath string, incomingCfg *config.Config, stats *backupMergeStats, sourceExtensionRoots ...string) (*backupImportReferenceMappings, error) {
 	if a.db == nil || a.db.GetConn() == nil {
 		return nil, fmt.Errorf("数据库未初始化")
 	}
@@ -193,7 +193,11 @@ func (a *App) backupMergeDatabaseFromSource(srcDBPath string, incomingCfg *confi
 		return nil, err
 	}
 
-	mappings, err := a.backupBuildImportReferenceMappings(tx, incomingCfg, stats)
+	var sourceExtensionRoot string
+	if len(sourceExtensionRoots) > 0 {
+		sourceExtensionRoot = sourceExtensionRoots[0]
+	}
+	mappings, err := a.backupBuildImportReferenceMappings(tx, incomingCfg, stats, sourceExtensionRoot)
 	if err != nil {
 		return nil, err
 	}
