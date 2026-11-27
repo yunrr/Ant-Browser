@@ -770,6 +770,14 @@ func storedExtensionIdentityAt(extension Extension, targetID, managedRoot string
 		}
 		stagedManifests = append(stagedManifests, manifest)
 	}
+	if evidence == nil && legacyCRX3WrongFirstProofKeyAugmentation(recorded, installed, archived, header, storeID, packageID) {
+		for _, manifest := range stagedManifests {
+			if !bytes.Equal(manifest, recorded) && !bytes.Equal(manifest, archived) {
+				return "", fmt.Errorf("历史插件记录与暂存安装清单不一致")
+			}
+		}
+		return packageID, nil
+	}
 	if originalPackage {
 		if packageID != originID || !bytes.Equal(archived, original) {
 			return "", fmt.Errorf("历史插件原包与安装来源不一致")
@@ -1054,6 +1062,40 @@ func originalCRXManifestIdentity(original, installed, publicKey []byte, storeID,
 		return "", fmt.Errorf("无法确认历史插件清单的本地补写来源")
 	}
 	return identity, nil
+}
+
+// legacyCRX3WrongFirstProofKeyAugmentation recognizes only the historical writer's
+// exact first-proof augmentation on an otherwise keyless, store-authenticated CRX3.
+func legacyCRX3WrongFirstProofKeyAugmentation(recorded, installed, archived, header []byte, storeID, packageID string) bool {
+	if storeID == "" || storeID != packageID {
+		return false
+	}
+	declaredID := crx3DeclaredID(header)
+	if len(declaredID) != 16 || extensionIDFromBytes(declaredID) != packageID {
+		return false
+	}
+	keys := crxPublicKeys(header)
+	if len(keys) < 2 || extensionIDFromPublicKey(keys[0]) == packageID {
+		return false
+	}
+	matchedProof := false
+	for _, key := range keys[1:] {
+		if extensionIDFromPublicKey(key) == packageID {
+			matchedProof = true
+			break
+		}
+	}
+	if !matchedProof {
+		return false
+	}
+	if identity, err := extensionInstallIdentity(archived, storeID, packageID); err != nil || identity != packageID {
+		return false
+	}
+	wrongFirstAugmentation, err := manifestWithExtensionKey(archived, extensionManifestKey(keys[0]))
+	if err != nil || wrongFirstAugmentation == nil || !bytes.Equal(wrongFirstAugmentation, recorded) {
+		return false
+	}
+	return installed != nil && bytes.Equal(installed, recorded)
 }
 
 // Parse the header before reading the full digest or opening the ZIP body.
